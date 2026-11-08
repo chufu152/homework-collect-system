@@ -1,0 +1,22 @@
+{
+  "name": "homework-collect-system",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace @homework/api",
+    "db:push": "npm run db:push --workspace @homework/api",
+    "dev:api": "npm run dev --workspace @homework/api",
+    "dev:web": "npm run dev --workspace @homework/web"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

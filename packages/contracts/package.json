@@ -1,0 +1,12 @@
+{
+  "name": "@homework/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/domain.js",
+  "types": "dist/domain.d.ts",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
