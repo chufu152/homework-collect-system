@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.superpowers
+.workbuddy-ai
+.env
+.env.*
+!.env.example
+**/var
+**/uploads
+**/*.log
+npm-debug.log*

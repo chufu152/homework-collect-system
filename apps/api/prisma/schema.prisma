@@ -1,0 +1,211 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AssignmentType {
+  online
+  offline
+  checkin
+  relay
+}
+
+enum AssignmentState {
+  draft
+  published
+  closed
+}
+
+enum SubmissionMode {
+  text
+  file
+  both
+}
+
+enum GroupStrategy {
+  manual
+  balanced_random
+}
+
+model DemoState {
+  id        String   @id
+  classId   String   @unique
+  createdAt DateTime @default(now())
+}
+
+model Classroom {
+  id          String       @id @default(cuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  students    Student[]
+  groups      StudentGroup[]
+  assignments Assignment[]
+}
+
+model Student {
+  id           String              @id @default(cuid())
+  classId      String
+  studentNo    String
+  name         String
+  createdAt    DateTime            @default(now())
+  classroom    Classroom           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  memberships  GroupMembership[]
+  targets      AssignmentTarget[]
+  submissions  Submission[]
+  completions  CompletionRecord[]
+  checkIns     CheckIn[]
+  relayEntries RelayEntry[]
+
+  @@unique([classId, studentNo])
+  @@index([classId, name])
+}
+
+model StudentGroup {
+  id          String            @id @default(cuid())
+  classId     String
+  name        String
+  strategy    GroupStrategy    @default(manual)
+  createdAt   DateTime          @default(now())
+  classroom   Classroom         @relation(fields: [classId], references: [id], onDelete: Cascade)
+  memberships GroupMembership[]
+
+  @@unique([classId, name])
+}
+
+model GroupMembership {
+  groupId   String
+  studentId String
+  group     StudentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student   Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, studentId])
+  @@index([studentId])
+}
+
+model Assignment {
+  id             String            @id @default(cuid())
+  classId        String
+  title          String
+  type           AssignmentType
+  state          AssignmentState   @default(draft)
+  instructions   String            @default("")
+  dueAt          DateTime?
+  submissionMode SubmissionMode    @default(both)
+  allowedTypes   String[]          @default(["pdf", "doc", "docx", "jpg", "jpeg", "png", "txt", "zip"])
+  maxFileCount   Int               @default(5)
+  maxFileBytes   Int               @default(20971520)
+  shareCode      String            @unique
+  createdAt      DateTime          @default(now())
+  publishedAt    DateTime?
+  closedAt       DateTime?
+  classroom      Classroom         @relation(fields: [classId], references: [id], onDelete: Cascade)
+  targets        AssignmentTarget[]
+  submissions    Submission[]
+  completions    CompletionRecord[]
+  checkIns       CheckIn[]
+  relayEntries   RelayEntry[]
+
+  @@index([classId, createdAt])
+  @@index([state, dueAt])
+}
+
+model AssignmentTarget {
+  assignmentId String
+  studentId    String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, studentId])
+  @@index([studentId])
+}
+
+model Submission {
+  id          String             @id @default(cuid())
+  assignmentId String
+  studentId   String
+  receiptCode String             @unique
+  textContent String             @default("")
+  submittedAt DateTime           @default(now())
+  version     Int                @default(1)
+  assignment  Assignment         @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student     Student            @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  versions    SubmissionVersion[]
+  feedback    Feedback?
+
+  @@unique([assignmentId, studentId])
+  @@index([assignmentId, submittedAt])
+}
+
+model SubmissionVersion {
+  id          String         @id @default(cuid())
+  submissionId String
+  version     Int
+  textContent String         @default("")
+  submittedAt DateTime       @default(now())
+  submission  Submission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  files       SubmissionFile[]
+
+  @@unique([submissionId, version])
+}
+
+model SubmissionFile {
+  id             String            @id @default(cuid())
+  versionId      String
+  storageKey     String            @unique
+  originalName   String
+  contentType    String
+  sizeBytes      Int
+  createdAt      DateTime          @default(now())
+  version        SubmissionVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId])
+}
+
+model Feedback {
+  id           String     @id @default(cuid())
+  submissionId String     @unique
+  score        Float?
+  feedbackText String
+  reviewedAt   DateTime   @default(now())
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+}
+
+model CompletionRecord {
+  assignmentId String
+  studentId    String
+  completed    Boolean   @default(false)
+  completedAt  DateTime?
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, studentId])
+}
+
+model CheckIn {
+  assignmentId String
+  studentId    String
+  checkedInAt  DateTime  @default(now())
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, studentId])
+}
+
+model RelayEntry {
+  id           String     @id @default(cuid())
+  assignmentId String
+  studentId    String
+  position     Int
+  content      String     @default("")
+  createdAt    DateTime   @default(now())
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, studentId])
+  @@unique([assignmentId, position])
+  @@index([assignmentId, position])
+}

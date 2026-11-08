@@ -1,0 +1,207 @@
+import 'reflect-metadata'
+import { resolve } from 'node:path'
+import { beforeAll, afterAll, describe, expect, it } from 'vitest'
+import { NestFactory } from '@nestjs/core'
+import { ValidationPipe } from '@nestjs/common'
+import { PGlite } from '@electric-sql/pglite'
+import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
+import { unzipSync } from 'fflate'
+import { AppModule } from '../src/app.module.js'
+import { HttpExceptionEnvelopeFilter } from '../src/common/http-exception.filter.js'
+
+const adminToken = 'e2e-private-teacher-key-with-32-bytes-minimum'
+let database: PGlite
+let databaseServer: PGLiteSocketServer
+let serverUrl = ''
+let app: Awaited<ReturnType<typeof NestFactory.create>>
+
+async function api(path: string, init: RequestInit = {}): Promise<{ response: Response; body: any }> {
+  const headers = new Headers(init.headers)
+  if (typeof init.body === 'string' && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (!path.startsWith('/public/')) headers.set('X-Demo-Admin-Token', adminToken)
+  const response = await fetch(`${serverUrl}/api/v1${path}`, { ...init, headers })
+  const contentType = response.headers.get('content-type') ?? ''
+  const body = contentType.includes('application/json') ? await response.json() : null
+  return { response, body }
+}
+
+describe('PostgreSQL homework core flow', () => {
+  beforeAll(async () => {
+    process.env.DEMO_ADMIN_TOKEN = adminToken
+    process.env.PUBLIC_WEB_URL = 'http://127.0.0.1:5173'
+    process.env.STORAGE_DRIVER = 'local'
+    process.env.UPLOAD_DIR = resolve(process.cwd(), 'var/e2e-uploads')
+
+    database = new PGlite()
+    await database.waitReady
+    databaseServer = new PGLiteSocketServer({ db: database, host: '127.0.0.1', port: 0, maxConnections: 4 })
+    await databaseServer.start()
+    const address = databaseServer.getServerConn()
+    const port = address.slice(address.lastIndexOf(':') + 1)
+    process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?schema=public`
+    process.env.DB_POOL_MAX = '1'
+
+    await database.exec(`
+      CREATE TYPE "AssignmentType" AS ENUM ('online', 'offline', 'checkin', 'relay');
+      CREATE TYPE "AssignmentState" AS ENUM ('draft', 'published', 'closed');
+      CREATE TYPE "SubmissionMode" AS ENUM ('text', 'file', 'both');
+      CREATE TYPE "GroupStrategy" AS ENUM ('manual', 'balanced_random');
+      CREATE TABLE "DemoState" ("id" TEXT PRIMARY KEY, "classId" TEXT NOT NULL UNIQUE, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW());
+      CREATE TABLE "Classroom" ("id" TEXT PRIMARY KEY, "name" TEXT NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW());
+      CREATE TABLE "Student" ("id" TEXT PRIMARY KEY, "classId" TEXT NOT NULL REFERENCES "Classroom"("id") ON DELETE CASCADE, "studentNo" TEXT NOT NULL, "name" TEXT NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE("classId", "studentNo"));
+      CREATE TABLE "StudentGroup" ("id" TEXT PRIMARY KEY, "classId" TEXT NOT NULL REFERENCES "Classroom"("id") ON DELETE CASCADE, "name" TEXT NOT NULL, "strategy" "GroupStrategy" NOT NULL DEFAULT 'manual', "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE("classId", "name"));
+      CREATE TABLE "GroupMembership" ("groupId" TEXT NOT NULL REFERENCES "StudentGroup"("id") ON DELETE CASCADE, "studentId" TEXT NOT NULL REFERENCES "Student"("id") ON DELETE CASCADE, PRIMARY KEY("groupId", "studentId"));
+      CREATE TABLE "Assignment" ("id" TEXT PRIMARY KEY, "classId" TEXT NOT NULL REFERENCES "Classroom"("id") ON DELETE CASCADE, "title" TEXT NOT NULL, "type" "AssignmentType" NOT NULL, "state" "AssignmentState" NOT NULL DEFAULT 'draft', "instructions" TEXT NOT NULL DEFAULT '', "dueAt" TIMESTAMPTZ, "submissionMode" "SubmissionMode" NOT NULL DEFAULT 'both', "allowedTypes" TEXT[] NOT NULL DEFAULT ARRAY['pdf','doc','docx','jpg','jpeg','png','txt','zip']::TEXT[], "maxFileCount" INTEGER NOT NULL DEFAULT 5, "maxFileBytes" INTEGER NOT NULL DEFAULT 20971520, "shareCode" TEXT NOT NULL UNIQUE, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), "publishedAt" TIMESTAMPTZ, "closedAt" TIMESTAMPTZ);
+      CREATE TABLE "AssignmentTarget" ("assignmentId" TEXT NOT NULL REFERENCES "Assignment"("id") ON DELETE CASCADE, "studentId" TEXT NOT NULL REFERENCES "Student"("id") ON DELETE CASCADE, PRIMARY KEY("assignmentId", "studentId"));
+      CREATE TABLE "Submission" ("id" TEXT PRIMARY KEY, "assignmentId" TEXT NOT NULL REFERENCES "Assignment"("id") ON DELETE CASCADE, "studentId" TEXT NOT NULL REFERENCES "Student"("id") ON DELETE RESTRICT, "receiptCode" TEXT NOT NULL UNIQUE, "textContent" TEXT NOT NULL DEFAULT '', "submittedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), "version" INTEGER NOT NULL DEFAULT 1, UNIQUE("assignmentId", "studentId"));
+      CREATE TABLE "SubmissionVersion" ("id" TEXT PRIMARY KEY, "submissionId" TEXT NOT NULL REFERENCES "Submission"("id") ON DELETE CASCADE, "version" INTEGER NOT NULL, "textContent" TEXT NOT NULL DEFAULT '', "submittedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE("submissionId", "version"));
+      CREATE TABLE "SubmissionFile" ("id" TEXT PRIMARY KEY, "versionId" TEXT NOT NULL REFERENCES "SubmissionVersion"("id") ON DELETE CASCADE, "storageKey" TEXT NOT NULL UNIQUE, "originalName" TEXT NOT NULL, "contentType" TEXT NOT NULL, "sizeBytes" INTEGER NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW());
+      CREATE TABLE "Feedback" ("id" TEXT PRIMARY KEY, "submissionId" TEXT NOT NULL UNIQUE REFERENCES "Submission"("id") ON DELETE CASCADE, "score" DOUBLE PRECISION, "feedbackText" TEXT NOT NULL, "reviewedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW());
+      CREATE TABLE "CompletionRecord" ("assignmentId" TEXT NOT NULL REFERENCES "Assignment"("id") ON DELETE CASCADE, "studentId" TEXT NOT NULL REFERENCES "Student"("id") ON DELETE CASCADE, "completed" BOOLEAN NOT NULL DEFAULT FALSE, "completedAt" TIMESTAMPTZ, PRIMARY KEY("assignmentId", "studentId"));
+      CREATE TABLE "CheckIn" ("assignmentId" TEXT NOT NULL REFERENCES "Assignment"("id") ON DELETE CASCADE, "studentId" TEXT NOT NULL REFERENCES "Student"("id") ON DELETE CASCADE, "checkedInAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY("assignmentId", "studentId"));
+      CREATE TABLE "RelayEntry" ("id" TEXT PRIMARY KEY, "assignmentId" TEXT NOT NULL REFERENCES "Assignment"("id") ON DELETE CASCADE, "studentId" TEXT NOT NULL REFERENCES "Student"("id") ON DELETE CASCADE, "position" INTEGER NOT NULL, "content" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE("assignmentId", "studentId"), UNIQUE("assignmentId", "position"));
+    `)
+
+    app = await NestFactory.create(AppModule, { logger: ['error'] })
+    app.setGlobalPrefix('api/v1')
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+    app.useGlobalFilters(new HttpExceptionEnvelopeFilter())
+    await app.listen(0, '127.0.0.1')
+    serverUrl = await app.getUrl()
+  }, 120000)
+
+  afterAll(async () => {
+    if (app) await app.close()
+    if (databaseServer) await databaseServer.stop()
+    if (database) await database.close()
+    delete process.env.DEMO_ADMIN_TOKEN
+    delete process.env.DATABASE_URL
+    delete process.env.DB_POOL_MAX
+    delete process.env.PUBLIC_WEB_URL
+    delete process.env.STORAGE_DRIVER
+    delete process.env.UPLOAD_DIR
+  }, 30000)
+
+  it('initializes, imports students, publishes, uploads, reviews, and exports a homework assignment', async () => {
+    const noToken = await fetch(`${serverUrl}/api/v1/classes/current`)
+    expect(noToken.status).toBe(401)
+
+    const initialized = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '三年级一班' }) })
+    expect(initialized.response.status, JSON.stringify(initialized.body)).toBe(201)
+    const classId = initialized.body.data.id as string
+
+    const duplicateClass = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '另一班' }) })
+    expect(duplicateClass.response.status).toBe(409)
+
+    const imported = await api(`/classes/${classId}/students`, {
+      method: 'PUT', body: JSON.stringify({ students: [
+        { studentNo: '2026001', name: '张三' }, { studentNo: '2026002', name: '李四' }, { studentNo: '2026003', name: '王五' },
+      ] }),
+    })
+    expect(imported.body.data).toMatchObject({ created: 3, updated: 0, rejected: [] })
+    const roster = await api(`/classes/${classId}/students?pageSize=10`)
+    expect(roster.body.data.items).toHaveLength(3)
+
+    const published = await api('/assignments', {
+      method: 'POST', body: JSON.stringify({
+        title: '周五数学练习', type: 'online', instructions: '请提交练习答案。', target: { mode: 'all' },
+        submissionMode: 'both', dueAt: '2026-11-20T12:00:00.000Z', publishNow: true,
+      }),
+    })
+    expect(published.response.status).toBe(201)
+    expect(published.body.data.expectedCount).toBe(3)
+    const assignmentId = published.body.data.id as string
+    const shareCode = published.body.data.shareCode as string
+
+    const publicView = await api(`/public/assignments/${shareCode}`)
+    expect(publicView.body.data).not.toHaveProperty('students')
+    expect(publicView.body.data.title).toBe('周五数学练习')
+
+    const forged = new FormData()
+    forged.set('studentNo', '2026001')
+    forged.set('studentName', '张三')
+    forged.set('textContent', '伪造附件演练')
+    forged.append('files', new Blob(['not really a pdf'], { type: 'application/pdf' }), 'fake.pdf')
+    const rejectedFile = await api(`/public/assignments/${shareCode}/submissions`, { method: 'POST', body: forged })
+    expect(rejectedFile.response.status).toBe(400)
+
+    const form = new FormData()
+    form.set('studentNo', '2026001')
+    form.set('studentName', '张三')
+    form.set('textContent', '答案：42')
+    form.append('files', new Blob(['%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF'], { type: 'application/pdf' }), 'answer.pdf')
+    const submission = await api(`/public/assignments/${shareCode}/submissions`, { method: 'POST', body: form })
+    expect(submission.response.status).toBe(201)
+    expect(submission.body.data.folderName).toBe('2026001-张三-周五数学练习')
+    const receiptCode = submission.body.data.receiptCode as string
+    const fileId = submission.body.data.files[0].id as string
+
+    const dashboard = await api(`/assignments/${assignmentId}/dashboard`)
+    expect(dashboard.response.status, JSON.stringify(dashboard.body)).toBe(200)
+    expect(dashboard.body.data.summary).toMatchObject({ expected: 3, submitted: 1, missing: 2 })
+    expect(dashboard.body.data.missingMentionText).toBe('@李四 @王五')
+
+    const feedback = await api(`/submissions/${submission.body.data.submissionId}/feedback`, {
+      method: 'PATCH', body: JSON.stringify({ score: 95, feedbackText: '步骤清晰。' }),
+    })
+    expect(feedback.body.data.feedback.score).toBe(95)
+    const receipt = await api(`/public/submissions/${receiptCode}`)
+    expect(receipt.body.data.textContent).toBe('答案：42')
+    expect(receipt.body.data.feedback.feedbackText).toBe('步骤清晰。')
+
+    const downloaded = await fetch(`${serverUrl}/api/v1/public/files/${fileId}/download?receiptCode=${receiptCode}`)
+    expect(downloaded.status).toBe(200)
+    expect(Buffer.from(await downloaded.arrayBuffer()).toString('utf8')).toContain('%PDF-1.7')
+
+    const docx = await api(`/assignments/${assignmentId}/exports?format=docx&submissionId=${submission.body.data.submissionId}`)
+    expect(docx.response.status).toBe(200)
+    expect(docx.response.headers.get('content-type')).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    const csv = await api(`/assignments/${assignmentId}/exports?format=csv`)
+    expect(csv.response.status).toBe(200)
+    expect(await csv.response.text()).toContain('李四')
+    const zip = await api(`/assignments/${assignmentId}/exports?format=zip`)
+    expect(zip.response.status).toBe(200)
+    const zipContents = unzipSync(new Uint8Array(await zip.response.arrayBuffer()))
+    expect(Object.keys(zipContents)).toContain('2026001-张三-周五数学练习/answer.pdf')
+
+    const review = await api(`/assignments/${assignmentId}/dashboard`)
+    const reviewedStudent = review.body.data.items.find((item: { name: string }) => item.name === '张三')
+    expect(reviewedStudent.textContent).toBe('答案：42')
+    expect(reviewedStudent.files[0].originalName).toBe('answer.pdf')
+
+    const teacherDownload = await api(`/assignments/${assignmentId}/submissions/${submission.body.data.submissionId}/download?fileId=${fileId}`)
+    expect(teacherDownload.response.status).toBe(200)
+    expect(teacherDownload.response.headers.get('content-disposition')).toContain('answer.pdf')
+    const unguardedDownload = await fetch(`${serverUrl}/api/v1/assignments/${assignmentId}/submissions/${submission.body.data.submissionId}/download?fileId=${fileId}`)
+    expect(unguardedDownload.status).toBe(401)
+    const wrongReceipt = await fetch(`${serverUrl}/api/v1/public/files/${fileId}/download?receiptCode=not-a-real-receipt`)
+    expect(wrongReceipt.status).toBe(404)
+    const wrongShare = await api('/public/assignments/not-a-real-share-code')
+    expect(wrongShare.response.status).toBe(404)
+
+    const revision = new FormData()
+    revision.set('studentNo', '2026001')
+    revision.set('studentName', '张三')
+    revision.set('textContent', '答案：43')
+    revision.append('files', new Blob(['%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF'], { type: 'application/pdf' }), 'answer-v2.pdf')
+    const resubmitted = await api(`/public/assignments/${shareCode}/submissions`, { method: 'POST', body: revision })
+    expect(resubmitted.response.status, JSON.stringify(resubmitted.body)).toBe(201)
+    expect(resubmitted.body.data.version).toBe(2)
+    expect(resubmitted.body.data.receiptCode).toBe(receiptCode)
+    const revisedReceipt = await api(`/public/submissions/${receiptCode}`)
+    expect(revisedReceipt.body.data.textContent).toBe('答案：43')
+    expect(revisedReceipt.body.data.files[0].originalName).toBe('answer-v2.pdf')
+    expect(revisedReceipt.body.data.feedback).toBeNull()
+
+    const closed = await api(`/assignments/${assignmentId}/state`, { method: 'PATCH', body: JSON.stringify({ state: 'closed' }) })
+    expect(closed.response.status).toBe(200)
+    const closedPublic = await api(`/public/assignments/${shareCode}`)
+    expect(closedPublic.response.status).toBe(404)
+    const afterClose = new FormData()
+    afterClose.set('studentNo', '2026001')
+    afterClose.set('studentName', '张三')
+    afterClose.set('textContent', '迟来的提交')
+    const rejectedAfterClose = await api(`/public/assignments/${shareCode}/submissions`, { method: 'POST', body: afterClose })
+    expect(rejectedAfterClose.response.status).toBe(404)
+  }, 120000)
+})

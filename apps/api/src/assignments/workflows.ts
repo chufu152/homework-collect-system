@@ -1,3 +1,12 @@
+export function partitionIntoGroups<T>(students: readonly T[], groupCount: number): T[][] {
+  if (!Number.isInteger(groupCount) || groupCount < 1 || groupCount > students.length) {
+    throw new RangeError('Group count must be between one and the student count.')
+  }
+  const groups = Array.from({ length: groupCount }, () => [] as T[])
+  students.forEach((student, index) => groups[index % groupCount].push(student))
+  return groups
+}
+
 export interface AudienceStudent {
   id: string
   name: string

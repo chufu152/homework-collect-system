@@ -7,16 +7,17 @@
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspace @homework/contracts && npm run build --workspace @homework/api && npm run build --workspace @homework/web",
+    "typecheck": "npm run build --workspace @homework/contracts && npm run typecheck --workspace @homework/api && npm run typecheck --workspace @homework/web",
     "db:generate": "npm run db:generate --workspace @homework/api",
+    "db:validate": "npm run db:validate --workspace @homework/api",
     "db:push": "npm run db:push --workspace @homework/api",
     "dev:api": "npm run dev --workspace @homework/api",
     "dev:web": "npm run dev --workspace @homework/web"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
-    "typescript": "^7.0.2",
+    "typescript": "^5.9.3",
     "vitest": "^5.1.0"
   }
 }

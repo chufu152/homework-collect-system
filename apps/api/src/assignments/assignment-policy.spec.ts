@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatSafeFolderName, getSubmissionStatus, resolveStudent } from './assignment-policy'
+import { formatSafeFolderName, getSubmissionStatus, resolveStudent } from './assignment-policy.js'
 
 describe('student resolution', () => {
   const roster = [

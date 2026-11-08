@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { calculateDashboard, resolveTargetStudents, validateSubmissionAccess } from './workflows'
+import { calculateDashboard, partitionIntoGroups, resolveTargetStudents, validateSubmissionAccess } from './workflows.js'
+
+describe('balanced group partitioning', () => {
+  it('distributes students across groups without losing members or exceeding one-person difference', () => {
+    expect(partitionIntoGroups(['s1', 's2', 's3', 's4', 's5'], 3)).toEqual([
+      ['s1', 's4'],
+      ['s2', 's5'],
+      ['s3'],
+    ])
+  })
+})
 
 describe('assignment audience snapshot', () => {
   const roster = [
