@@ -53,12 +53,13 @@
 npm install
 cp .env.example .env          # 填写 POSTGRES_PASSWORD、DATABASE_URL、DEMO_ADMIN_TOKEN（≥32 位随机值）
 npm run db:generate           # 生成 Prisma Client 到 apps/api/src/generated/prisma
-npm run db:push               # 同步 schema 到 PostgreSQL
+npm run db:deploy             # 应用 prisma/migrations 下的版本化迁移（推荐）
 npm run dev:api               # http://127.0.0.1:3000/api/v1
 npm run dev:web               # http://127.0.0.1:5173（已配置 /api 代理）
 ```
 
 浏览器打开 `http://127.0.0.1:5173/class/setup`，先填入与 `.env` 一致的 `DEMO_ADMIN_TOKEN` 并保存到会话，再建立班级、导入名单。
+`db:push` 仍保留，仅供本地快速试改 schema；已部署的环境一律用 `db:deploy` 应用版本化迁移。
 
 Docker 部署（前端 nginx 反代 `/api` 到 API 服务）：
 
@@ -67,7 +68,11 @@ cp .env.example .env          # 填写强密码与强管理令牌
 docker compose up --build     # 访问 http://localhost:8080
 ```
 
-Compose 会依次启动 PostgreSQL、`migrate`（`prisma db push`）、API、Web；API 带健康检查，Web 在 API 健康后才启动，避免启动竞态导致首次访问 502。上传文件保存在 `homework-uploads` 卷。nginx 的 `client_max_body_size` 设为 `210m`，与后端 `files: 10` × `MAX_UPLOAD_BYTES`（默认 20 MiB）对齐，避免合法的多个大附件被反向代理以 413 拒绝；若调大 `MAX_UPLOAD_BYTES`，需同步调整 `apps/web/nginx.conf`。
+Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、API、Web；API 带健康检查，Web 在 API 健康后才启动，避免启动竞态导致首次访问 502。上传文件保存在 `homework-uploads` 卷。nginx 的 `client_max_body_size` 设为 `210m`，与后端 `files: 10` × `MAX_UPLOAD_BYTES`（默认 20 MiB）对齐，避免合法的多个大附件被反向代理以 413 拒绝；若调大 `MAX_UPLOAD_BYTES`，需同步调整 `apps/web/nginx.conf`。
+数据库结构由 `apps/api/prisma/migrations/` 下的版本化 SQL 管理：在 `apps/api` 目录执行
+`npx prisma migrate dev --name <change>` 生成新迁移并提交 `migration.sql`，部署时由 `db:deploy` 按序应用。
+两组 E2E 通过 `apps/api/test/migrations.ts` 按目录顺序执行同一批迁移 SQL，测试库结构与部署结果一致，无需再维护手工建表脚本。
+
 生产环境应把 `STORAGE_DRIVER=s3` 并配置私有 S3 兼容桶（`S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、
 `S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`），对外通过 HTTPS 反向代理，数据库与对象存储均需持久化与备份。
 
@@ -87,7 +92,8 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma db push`）、API、Web
 | `MAX_EXPORT_BYTES` | `209715200` | ZIP 导出总大小安全上限 |
 
 验证命令：`npm test`（单元 + 组件 + PostgreSQL 协议 E2E）、`npm run typecheck`、`npm run build`、`npm run db:validate`、
-`npm audit`。端到端测试使用 PGlite 提供的 PostgreSQL 协议端点，无需独立数据库服务。
+`npm audit`、`npm ci --dry-run`。端到端测试使用 PGlite 提供的 PostgreSQL 协议端点，无需独立数据库服务；
+建表来源是 `prisma/migrations`，与 `db:deploy` 应用的是同一批 SQL。
 
 ## 3. 管理端接口
 
@@ -360,6 +366,9 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma db push`）、API、Web
 ## 6. 已知限制
 
 - 单班级、无登录、无多租户；`POST /demo/bootstrap` 只能执行一次。
-- 数据库迁移使用 `prisma db push`（demo 阶段），正式版应改为版本化 migration。
+- 已提供版本化迁移（`apps/api/prisma/migrations/`，Compose 用 `prisma migrate deploy`），但**尚未在真实 PostgreSQL
+  实例上执行过 `migrate deploy`**；本机无 Docker/独立 PostgreSQL，迁移 SQL 由 PGlite 直接执行并驱动全部 E2E，
+  建表、枚举、外键与索引均生效。`prisma migrate diff --from-migrations` 的 shadow database 一致性校验因
+  PGlite 协议端点与 Prisma CLI 引擎不兼容（P1001）未能离线完成，需在真实部署验证中补做。
 - 本环境未安装 Docker/独立 PostgreSQL 服务，因此未执行镜像构建与真实数据库部署验证；
   E2E 使用 PGlite 提供的 PostgreSQL 协议端点覆盖完整业务链路。

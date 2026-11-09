@@ -12,6 +12,7 @@
     "db:generate": "npm run db:generate --workspace @homework/api",
     "db:validate": "npm run db:validate --workspace @homework/api",
     "db:push": "npm run db:push --workspace @homework/api",
+    "db:deploy": "npm run db:deploy --workspace @homework/api",
     "dev:api": "npm run dev --workspace @homework/api",
     "dev:web": "npm run dev --workspace @homework/web"
   },

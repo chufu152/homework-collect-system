@@ -38,11 +38,18 @@ const dashboard = {
   ],
 }
 
+function buttonWithText(wrapper: ReturnType<typeof mount>, label: string) {
+  const button = wrapper.findAll('button').find((candidate) => candidate.text() === label)
+  if (!button) throw new Error(`button not found: ${label}`)
+  return button
+}
+
 describe('teacher dashboard submission review', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.dashboard.mockResolvedValue(dashboard)
     api.downloadSubmissionFile.mockResolvedValue(undefined)
+    api.exportFile.mockResolvedValue(undefined)
   })
 
   it('shows the submitted text and downloads an attachment with the teacher key', async () => {
@@ -60,5 +67,23 @@ describe('teacher dashboard submission review', () => {
     await flushPromises()
 
     expect(api.downloadSubmissionFile).toHaveBeenCalledWith('assignment-1', 'submission-1', 'file-1')
+  })
+
+  it('exports the CSV roster, ZIP archive and a single-submission DOCX', async () => {
+    const wrapper = mount(AssignmentDashboardView, {
+      props: { assignmentId: 'assignment-1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    await buttonWithText(wrapper, '导出名单 CSV').trigger('click')
+    await buttonWithText(wrapper, '导出提交文件 ZIP').trigger('click')
+    await buttonWithText(wrapper, '导出 Word').trigger('click')
+    await flushPromises()
+
+    expect(api.exportFile).toHaveBeenCalledWith('assignment-1', 'csv', undefined)
+    expect(api.exportFile).toHaveBeenCalledWith('assignment-1', 'zip', undefined)
+    expect(api.exportFile).toHaveBeenCalledWith('assignment-1', 'docx', 'submission-1')
+    expect(wrapper.text()).not.toContain('导出失败')
   })
 })

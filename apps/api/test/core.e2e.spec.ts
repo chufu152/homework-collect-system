@@ -1,5 +1,4 @@
 import 'reflect-metadata'
-import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { NestFactory } from '@nestjs/core'
@@ -9,6 +8,7 @@ import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
 import { unzipSync } from 'fflate'
 import { AppModule } from '../src/app.module.js'
 import { HttpExceptionEnvelopeFilter } from '../src/common/http-exception.filter.js'
+import { loadMigrationSql } from './migrations.js'
 
 const adminToken = 'e2e-private-teacher-key-with-32-bytes-minimum'
 let database: PGlite
@@ -42,7 +42,7 @@ describe('PostgreSQL homework core flow', () => {
     process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?schema=public`
     process.env.DB_POOL_MAX = '1'
 
-    await database.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'))
+    await database.exec(loadMigrationSql())
 
     app = await NestFactory.create(AppModule, { logger: ['error'] })
     app.setGlobalPrefix('api/v1')

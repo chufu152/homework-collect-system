@@ -26,7 +26,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-homework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-homework}?schema=public
-    command: ["npm", "run", "db:push", "--workspace", "@homework/api"]
+    command: ["npm", "run", "db:deploy", "--workspace", "@homework/api"]
     depends_on:
       postgres:
         condition: service_healthy

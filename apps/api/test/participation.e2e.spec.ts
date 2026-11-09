@@ -1,5 +1,4 @@
 import 'reflect-metadata'
-import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { NestFactory } from '@nestjs/core'
@@ -8,6 +7,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
 import { AppModule } from '../src/app.module.js'
 import { HttpExceptionEnvelopeFilter } from '../src/common/http-exception.filter.js'
+import { loadMigrationSql } from './migrations.js'
 
 const adminToken = 'e2e-private-teacher-key-with-32-bytes-minimum'
 let database: PGlite
@@ -36,7 +36,7 @@ describe('offline, check-in, and relay assignment flows', () => {
     const port = Number(databaseServer.getServerConn().split(':').pop())
     process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?schema=public`
     process.env.DB_POOL_MAX = '1'
-    await database.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'))
+    await database.exec(loadMigrationSql())
     app = await NestFactory.create(AppModule, { logger: ['error'] })
     app.setGlobalPrefix('api/v1')
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))

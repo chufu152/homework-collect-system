@@ -104,14 +104,14 @@
 
 上方 Task 1–4 的复选框在交付时未回填，实际均已实现并通过验证，故统一标记为完成。证据如下：
 
-- `npm test`：**39 项全部通过**（API 28 / Web 8 / contracts 3），其中两组 PostgreSQL 协议 E2E 覆盖
+- `npm test`：**41 项全部通过**（API 28 / Web 10 / contracts 3），其中两组 PostgreSQL 协议 E2E 覆盖
   初始化→名单→发布→提交→看板→批改→回执→导出→重复提交→关闭后拒绝，以及线下登记、签到、接龙、定向目标与鉴权隔离。
 - `npm run typecheck`、`npm run build`、`npm run db:validate`、`npm ci --dry-run` 全部通过；
   `npm audit --omit=dev` 为 0 漏洞。
-- 两组 E2E 的建表语句已抽取为共享 `apps/api/test/schema.sql`，避免与 `schema.prisma` 双份维护漂移。
-- 组件测试现有 5 个 spec：班级设置、作业创建、教师看板、学生提交、提交回执。
+- 两组 E2E 现直接执行 `prisma/migrations/*/migration.sql`（经 `apps/api/test/migrations.ts` 按序加载），与 `db:deploy` 共用同一份 DDL；手写 `schema.sql` 已删除。
+- 组件测试现有 5 个 spec / 10 项：班级设置、作业创建、教师看板（含导出按钮与附件下载）、学生提交（含签到、接龙、版本化重交）、提交回执。
 - **仍未验证**：本机无 Docker / 独立 PostgreSQL，Task 4 中「真实数据库端到端」与镜像构建未执行；
   由 PGlite 协议端点覆盖业务链路，部署配置见 `docker-compose.yml` 与 `docs/api.md` 第 2 节。
 - 全量 `npm audit` 仍有 4 个 dev 依赖链中危告警（`js-beautify → glob/minimatch`），
   已评估并记为「仅开发依赖、生产 0 漏洞、接受风险」，详见 `docs/handoff-prompt.md` 第 5 节 P0-2。
-- 后续改进（部署验证、版本化迁移、限流、导出性能、正式版）按 `docs/handoff-prompt.md` 第 5 节的优先级推进。
+- 版本化迁移已于 2026-11-09 补齐（`prisma/migrations` + `db:deploy` + E2E 单一事实来源）；后续改进（真实部署验证、限流、流式导出、版本历史 UI、正式版）按 `docs/handoff-prompt.md` 第 5 节的优先级推进。
