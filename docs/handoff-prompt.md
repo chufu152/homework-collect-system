@@ -33,12 +33,12 @@
 ### 1.3 当前状态（截至 2026-11-09）
 
 - 阶段 0–4（规划、基线、后端、前端、验收）**已完成并推送**；阶段 5「正式版」未开始。
-- 默认分支 `main`，本地 `main` 跟踪 `origin/main`，工作区干净，远端 `main` 与本地 HEAD 一致。提交历史共 **5 个**，前四个为阶段交付、第五个为交接文档：
-  `000be38` 规划 → `97ffde0` 工作区与领域规则 → `d9ef8ee` 完整实现 → `ddde3a2` 接口文档与交付说明 → 第 5 个提交加入 `docs/handoff-prompt.md`（本文）。
+- 默认分支 `main`，本地 `main` 跟踪 `origin/main`，工作区干净，远端 `main` 与本地 HEAD 一致。提交历史共 **6 个**：前四个为阶段交付，第五个加入本文，第六个为按本文 P0/P1 优先级完成的首轮改进（部署配置、共享 E2E DDL、回执页测试、计划回填与安全边界标注）。
+  `000be38` 规划 → `97ffde0` 工作区与领域规则 → `d9ef8ee` 完整实现 → `ddde3a2` 接口文档 → `896430d` 接管提示词 → 第 6 个提交为 P0/P1 改进。
   请务必以 `git log --oneline -8` 与 `git ls-remote --heads origin` 的**实际输出**为准，不要假定 SHA 不变。
 - 技术栈：Node.js 22 + npm workspaces；`apps/api` = NestJS 12 + Prisma 7 + PostgreSQL 16；`apps/web` = Vue 3 + TypeScript + Vite 6 + Vue Router；`packages/contracts` = 共享领域纯函数；Vitest 5 + @vue/test-utils + PGlite（提供 PostgreSQL 协议端点做 E2E）；文件存储支持本地私有目录或 S3 兼容对象存储。
-- 验证结果（交接文档提交前再次全量重跑，结果一致）：`npm test` 36 项全部通过（API 28 / Web 5 / contracts 3，含 2 组 E2E）；`npm run typecheck`、`npm run build`、`npm run db:validate`、`npm ci --dry-run` 全部通过；编译产物 `apps/api/dist` 可正常加载；`npm audit --omit=dev` 为 0 漏洞（该命令偶发因审计端点网络卡顿，重试即可）。
-- 已知限制：本机没有 Docker 与独立 PostgreSQL 服务，**镜像构建与真实数据库部署未验证**，E2E 用 PGlite 覆盖完整链路；全量 `npm audit` 仍有 4 个中危，全部来自 dev 依赖链 `@vue/test-utils@2.4.11 → js-beautify → glob/minimatch`，`npm audit fix` 与升级 test-utils 均无法在不破坏工具链的前提下消除，生产依赖不受影响。
+- 验证结果（P0/P1 改进提交前全量重跑）：`npm test` **39 项**全部通过（API 28 / Web 8 / contracts 3，含 2 组 E2E）；`npm run typecheck`、`npm run build`、`npm run db:validate`、`npm ci --dry-run` 全部通过；编译产物 `apps/api/dist` 可正常加载；`npm audit --omit=dev` 为 0 漏洞（该命令偶发因审计端点网络卡顿，重试即可）。
+- 已知限制：本机没有 Docker 与独立 PostgreSQL 服务，**镜像构建与真实数据库部署未验证**，E2E 用 PGlite 覆盖完整链路；全量 `npm audit` 仍有 4 个中危，全部来自 dev 依赖链 `@vue/test-utils@2.4.11 → js-beautify → glob/minimatch`，`npm audit fix` 与升级 test-utils 均无法在不破坏工具链的前提下消除，生产依赖不受影响；本轮评估结论为「仅开发依赖、生产 0 漏洞、接受风险」，证据见第 5 节 P0-2，待用户最终确认。
 - 安全边界：demo 用能力链接替代身份核验，链接泄露即可冒用，禁止用于真实敏感数据。
 
 ---
@@ -55,7 +55,7 @@
 |---|---|
 | `docs/api.md` | **接口契约**：全部 22 个接口的请求方式、路径、参数、返回结构、鉴权标注、错误码；另含本地/Docker 启动步骤、环境变量表、验证命令、安全边界与已知限制 |
 | `docs/superpowers/specs/2026-11-08-homework-collect-demo-design.md` | 意图、范围、技术约束、核心数据与状态、验收标准；以及技术栈选型与理由、角色与权限设计、开发阶段与交付物、E2E 覆盖范围 |
-| `docs/superpowers/plans/2026-11-08-homework-collect-demo.md` | Task 1–4 的逐步实施计划与 Review Focus。**注意：其中的 `- [ ]` 复选框未回填，但任务实际已完成**，以代码与验证结果为准，不要据此判定功能缺失 |
+| `docs/superpowers/plans/2026-11-08-homework-collect-demo.md` | Task 1–4 的逐步实施计划与 Review Focus；Task 复选框已于 2026-11-09 全部回填，并附「验收证据」段落（含未验证项说明） |
 | `docs/handoff-prompt.md` | 本接管提示词（供交接使用，不是需求文档）。**已纳入仓库并推送到 `main`**，clone 后可直接读取 |
 
 ### 2.2 已完成部分的代码位置
@@ -68,7 +68,8 @@
 - `apps/api/src/storage/`、`exports/`：本地/S3 存储适配器、上传校验、ZIP/DOCX/CSV 导出。
 - `apps/api/prisma.config.ts`、`src/prisma/prisma.service.ts`：Prisma 7 PostgreSQL adapter 配置。
 - `apps/api/src/generated/prisma/`：**生成产物，已被 .gitignore 忽略**；新环境必须先跑 `npm run db:generate`，否则编译与运行会失败。
-- `apps/api/test/core.e2e.spec.ts`、`participation.e2e.spec.ts`：用 PGlite 启动真实 Nest HTTP 服务的全链路 E2E（每个文件内各有一份手写 `CREATE TABLE` SQL，与 schema 需保持同步）。
+- `apps/api/test/core.e2e.spec.ts`、`participation.e2e.spec.ts`：用 PGlite 启动真实 Nest HTTP 服务的全链路 E2E；两者共同执行 `apps/api/test/schema.sql`。
+- `apps/api/test/schema.sql`：两组 E2E 共享的建表 DDL（枚举、表、唯一约束）。**修改 `schema.prisma` 时必须同步此文件**，否则迁移与测试会漂移。
 - `apps/web/src/router.ts`、`api/client.ts`、`views/*.vue`、`styles.css`：教师/学生全部页面与 API 客户端；`views/*.spec.ts` 为组件测试。
 - `packages/contracts/src/domain.ts`：作业类型/状态、目标名单、缺交名单等共享纯函数及其单测。
 
@@ -115,16 +116,16 @@
 
 ### P0 — 影响真实可用性与交付可信度，优先处理
 
-1. **真实环境部署验证**：在具备 Docker 与 PostgreSQL 的机器上执行 `cp .env.example .env`（填强密码与 ≥32 位 `DEMO_ADMIN_TOKEN`）→ `docker compose up --build`，验证 `migrate`（当前用 `prisma db push`）→ `api` → `web` 全链路、nginx 反代 `/api`、上传目录写入权限、`PUBLIC_WEB_URL` 生成的分享链接可用、容器重启后数据卷持久化。当前环境无 Docker/psql，此项**从未验证**。
-2. **处置 dev 依赖 4 个中危告警**：来源 `@vue/test-utils@2.4.11 → js-beautify → glob/minimatch`。已确认 `npm audit fix` 无效、升级 test-utils 到 2.5.1 反而变成 5 个告警。可选路径：评估 npm `overrides` 强制 `minimatch`/`glob` 到安全版本（需回归组件测试）、替换测试工具、或明确记录为「仅开发依赖、生产 0 漏洞、接受风险」并由用户确认。
+1. **真实环境部署验证**：在具备 Docker 与 PostgreSQL 的机器上执行 `cp .env.example .env`（填强密码与 ≥32 位 `DEMO_ADMIN_TOKEN`）→ `docker compose up --build`，验证 `migrate`（当前用 `prisma db push`）→ `api` → `web` 全链路、nginx 反代 `/api`、上传目录写入权限、`PUBLIC_WEB_URL` 生成的分享链接可用、容器重启后数据卷持久化。当前环境无 Docker/psql，镜像构建与真实数据库部署**仍未验证**（本轮已复核 Docker/psql 均缺失）。**已完成的静态修复**：nginx `client_max_body_size` 由 25m 提到 210m，与后端 `files: 10` × `MAX_UPLOAD_BYTES`（20 MiB）对齐；Compose 为 API 增加 healthcheck，并让 `web` 等待 `service_healthy`，消除启动竞态导致的首次 502。
+2. **处置 dev 依赖 4 个中危告警**：来源 `@vue/test-utils@2.4.11 → js-beautify → glob/minimatch`。已确认 `npm audit fix` 无效、升级 test-utils 到 2.5.1 反而变成 5 个告警。可选路径：评估 npm `overrides` 强制 `minimatch`/`glob` 到安全版本（需回归组件测试）、替换测试工具、或明确记录为「仅开发依赖、生产 0 漏洞、接受风险」并由用户确认。**本轮评估结论：采用接受风险，代码未改动**。证据：`npm audit fix` 执行后告警数不变且无文件改动；`overrides` 强制 `minimatch≥11.0.1` / `glob≥14.0.2` 时 npm 10.9.7 + workspaces 的 lockfile 无法落地（`npm ls` 报 invalid、`npm audit` 返回 400 Invalid package tree），且这两个新版为 ESM-only，会破坏 CJS 的 `editorconfig`/`js-beautify` 链。若用户要求清零，唯一稳妥路径是替换测试工具链或等待上游提供 CJS 兼容修复。
 
 ### P1 — demo 健壮性与工程化债
 
 3. **版本化数据库迁移**：当前只有 `prisma db push`，`prisma/migrations` 为空。正式交付前应改用 `prisma migrate dev` 生成迁移，并把 Compose 的 `migrate` 服务改为 `prisma migrate deploy`。
-4. **消除 E2E 建表 SQL 漂移**：两个 E2E 文件各维护一份手写 `CREATE TABLE`，改 schema 时容易漏改。抽取为共享 SQL 或由迁移脚本生成。
-5. **公开接口防护**：当前无速率限制、无防爆破；`shareCode` / `receiptCode` 无过期与撤销机制；管理令牌无轮换；无审计日志。demo 可接受，但应在 spec 与 `docs/api.md` 中保持显式标注，若要试点使用则需补齐。
+4. ~~**消除 E2E 建表 SQL 漂移**~~ **已完成**：两个 E2E 现共同执行 `apps/api/test/schema.sql`（含枚举与约束），改 `schema.prisma` 时只需同步该文件。**剩余风险**：它仍是手写 DDL，未由 migration 自动生成，需与第 3 条一并解决。
+5. **公开接口防护（文档标注已完成，代码仍待补齐）**：`docs/api.md` 第 5 节与 spec 技术约束已显式列出「无速率限制/防爆破、能力链接无过期与撤销、管理令牌无轮换与审计日志」。代码层面仍未实现，若要试点承载真实数据必须补齐。
 6. **大文件与导出性能**：ZIP 导出会把全部附件读入内存（默认上限 `MAX_EXPORT_BYTES=209715200`），大班集需改为流式/后台任务；下载同样为全量读入。
-7. **补齐文档与测试的一致性**：把 `docs/superpowers/plans/2026-11-08-homework-collect-demo.md` 的 Task 复选框回填为已完成并附验证证据；扩充前端组件测试（目前仅 4 个 spec / 5 项，导出按钮、签到/接龙、回执页尚未覆盖）。
+7. **补齐文档与测试的一致性（部分完成）**：实施计划 Task 1–4 复选框已全部回填并附「验收证据」段落；新增 `StudentReceiptView.spec.ts`（3 项：最新提交/反馈/附件下载、无反馈占位、失败重试），前端现 5 个 spec / 8 项。**仍缺**：导出按钮、签到/接龙交互的组件测试。
 8. **提交版本历史可视化**：后端保留 `SubmissionVersion` 与历史附件，但看板、回执与 ZIP 都只暴露最新版本；若用户需要「查看历次修改」，需新增受控接口与 UI。
 
 ### P2 — 正式版（阶段 5，需先出方案再动手）

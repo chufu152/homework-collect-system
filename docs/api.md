@@ -67,7 +67,7 @@ cp .env.example .env          # 填写强密码与强管理令牌
 docker compose up --build     # 访问 http://localhost:8080
 ```
 
-Compose 会依次启动 PostgreSQL、`migrate`（`prisma db push`）、API、Web；上传文件保存在 `homework-uploads` 卷。
+Compose 会依次启动 PostgreSQL、`migrate`（`prisma db push`）、API、Web；API 带健康检查，Web 在 API 健康后才启动，避免启动竞态导致首次访问 502。上传文件保存在 `homework-uploads` 卷。nginx 的 `client_max_body_size` 设为 `210m`，与后端 `files: 10` × `MAX_UPLOAD_BYTES`（默认 20 MiB）对齐，避免合法的多个大附件被反向代理以 413 拒绝；若调大 `MAX_UPLOAD_BYTES`，需同步调整 `apps/web/nginx.conf`。
 生产环境应把 `STORAGE_DRIVER=s3` 并配置私有 S3 兼容桶（`S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、
 `S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`），对外通过 HTTPS 反向代理，数据库与对象存储均需持久化与备份。
 
@@ -352,6 +352,10 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma db push`）、API、Web
 - CSV 导出对以 `= + - @` 开头的单元格加前缀，避免表格软件公式注入；ZIP 目录名同样做过安全化。
 - 公开接口不提供全班名单；身份错误、非目标学生、无效分享码统一返回不可区分的错误，避免枚举。
 - 所有响应带 `requestId`（由中间件生成），便于日志追踪。
+- **未实现速率限制与防爆破**：管理令牌、分享码、回执码的尝试次数不受限；公网暴露前必须补充限流与失败锁定。
+- **能力链接无过期与撤销机制**：`shareCode` / `receiptCode` 生成后长期有效；关闭作业只停止公开操作，不作废已有回执码，链接泄露后无法单独吊销。
+- **管理令牌无轮换、无审计日志**：`DEMO_ADMIN_TOKEN` 是静态环境变量，轮换需重启服务；除 `requestId` 外没有操作审计记录。
+- 上述三项是 demo 明确接受的安全边界，**试点承载真实学生数据前必须补齐并重新评估**。
 
 ## 6. 已知限制
 

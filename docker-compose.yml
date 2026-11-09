@@ -53,6 +53,13 @@ services:
         condition: service_completed_successfully
     expose:
       - "3000"
+    healthcheck:
+      # Any HTTP response (401 without a token, or 503 when the token is unset) means Nest is listening.
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:3000/api/v1/classes/current\").then(()=>process.exit(0)).catch(()=>process.exit(1))'"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   web:
     build:
@@ -63,7 +70,8 @@ services:
     ports:
       - "127.0.0.1:${WEB_PORT:-8080}:8080"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   homework-postgres:
