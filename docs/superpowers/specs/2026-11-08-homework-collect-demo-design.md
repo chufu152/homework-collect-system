@@ -18,8 +18,10 @@
 - PostgreSQL + Prisma 为正式数据层，不以浏览器 localStorage 或内存数组替代持久化。
 - 开发环境文件存本地私有目录；生产环境使用私有 S3 兼容对象存储。下载通过受控接口或短时签名 URL。
 - 文件仅接受明确白名单类型和大小上限；客户端文件名不能成为实际文件系统路径。
-- 不实现多班级正式账号系统；不推送至共享 GitHub 分支，也不发布公网应用。
-- demo 不提供速率限制、能力链接过期/撤销、管理令牌轮换与操作审计日志；这些边界在 `docs/api.md` 第 5 节显式列出，试点使用前必须补齐。
+- 不实现多班级正式账号系统；不发布公网应用。
+- demo 已提供基础单实例限流与结构化操作审计日志；**仍不提供能力链接过期/撤销、管理令牌轮换与失败账号锁定**。
+  这些剩余边界在 `docs/api.md` 第 5 节显式列出，试点承载真实数据前必须补齐。
+- 单文件附件下载使用流式响应；ZIP 导出仍在内存中组装并受 `MAX_EXPORT_BYTES` 约束。
 
 ## 核心数据和状态
 
@@ -43,10 +45,13 @@
 - `GET /assignments/{assignmentId}/dashboard`
 - `PATCH /submissions/{submissionId}/feedback`
 - `GET /public/submissions/{receiptCode}`
+- `GET /submissions/{submissionId}/versions`
 - `PUT /assignments/{assignmentId}/completions/{studentId}`
 - `POST /public/assignments/{shareCode}/check-ins`
 - `GET|POST /public/assignments/{shareCode}/relay-entries`
 - `GET /assignments/{assignmentId}/exports?format=zip|csv|docx`
+- `GET /assignments/{assignmentId}/submissions/{submissionId}/download?fileId=...`（教师下载）
+- `GET /files/{fileId}/download`、`GET /public/files/{fileId}/download`、`GET /health`
 
 ## 验收标准
 
@@ -89,7 +94,7 @@ JWT + RBAC、学生与账号绑定、按班级的数据隔离与审计日志。�
 | --- | --- | --- | --- |
 | 0 规划 | 需求边界、技术选型、接口基线、阶段拆分 | 本设计说明、`docs/api.md`、`docs/superpowers/plans/2026-11-08-homework-collect-demo.md` | 完成 |
 | 1 基线 | npm workspaces、共享领域模型、Docker/env 模板 | `packages/contracts`、根配置、纯业务规则单测 | 完成 |
-| 2 后端 | Prisma schema、22 个 REST 接口、上传存储、导出、管理守卫 | `apps/api`、单元与 E2E 测试 | 完成 |
+| 2 后端 | Prisma schema、24 个 REST 接口（含健康检查与版本历史）、上传存储与流式下载、导出、管理守卫、限流与审计 | `apps/api`、单元与 E2E 测试 | 完成 |
 | 3 前端 | 班级设置、发布、看板/批改/导出、学生提交/签到/接龙/回执 | `apps/web`、组件测试、移动端样式 | 完成 |
 | 4 验收 | 全链路回归、安全审查、类型检查与生产构建 | `npm test` / `npm run typecheck` / `npm run build` / `npm run db:validate` 结果 | 完成 |
 | 5 正式版 | 多班级、账号登录与 JWT/RBAC、迁移运维治理（备份/回滚演练）、对象存储与 HTTPS 上线、审计与备份 | 待立项 | 未开始 |
@@ -99,3 +104,12 @@ JWT + RBAC、学生与账号绑定、按班级的数据隔离与审计日志。�
 阶段 4 的 E2E 覆盖：初始化→导入名单→发布→伪造附件拒绝→线上提交→看板/缺交名单→批改→回执→附件下载→
 CSV/DOCX/ZIP 导出→教师查看提交内容与附件→重复提交保留版本并清除反馈→关闭后拒绝提交，以及线下登记可撤销、
 签到幂等与姓名歧义、接龙顺序与重复占位、定向目标名单与关闭后停止公开操作、无效令牌/分享码/回执码隔离。
+
+**后端补齐轮次（2026-11-09，未改动前端）**：新增基础限流与结构化审计日志、提交版本历史接口（教师
+`GET /submissions/{id}/versions` 与回执新增 `versions`）、流式附件下载、`GET /health` 就绪检查与优雅关闭；
+修复 multipart 提交 DTO 校验、`text` 模式误收附件、管理令牌校验强度不一致、同名附件导致 ZIP 导出失败、
+上传超限错误信封与分页参数上限；并把 `null`/`undefined` 结果也纳入统一响应信封（`data: null`），
+消除 `GET /classes/current` 未初始化时的空响应体导致前端把空 `Blob` 误判为「班级已存在」的问题。
+新增 E2E 覆盖健康检查、字段校验、413、版本历史、历史附件下载、同名附件导出与空班级信封；
+新增 `response.interceptor.spec.ts` 锁定信封行为（含 `@Res()` 下载直通）。
+本轮所有接口变更均为追加或错误语义修正，前端无需随之修改；前端页面如何消费版本历史由后续阶段决定。

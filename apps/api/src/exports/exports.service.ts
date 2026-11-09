@@ -31,7 +31,7 @@ export class ExportsService {
         .normalize('NFKC')
         .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '-')
         .replace(/\.+/g, '-')
-        .trim()
+        .trim() || 'submission'
       for (const file of submission.versions[0]?.files ?? []) {
         entries.push({
           name: `${folder}/${safeDownloadName(file.originalName)}`,

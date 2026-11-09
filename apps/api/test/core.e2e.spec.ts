@@ -68,6 +68,12 @@ describe('PostgreSQL homework core flow', () => {
     const noToken = await fetch(`${serverUrl}/api/v1/classes/current`)
     expect(noToken.status).toBe(401)
 
+    // Before bootstrap the endpoint must still return a parseable JSON envelope.
+    const emptyClass = await api('/classes/current')
+    expect(emptyClass.response.status).toBe(200)
+    expect(emptyClass.response.headers.get('content-type')).toContain('application/json')
+    expect(emptyClass.body).toMatchObject({ code: 'OK', data: null })
+
     const initialized = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '三年级一班' }) })
     expect(initialized.response.status, JSON.stringify(initialized.body)).toBe(201)
     const classId = initialized.body.data.id as string

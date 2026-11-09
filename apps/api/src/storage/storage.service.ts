@@ -1,7 +1,9 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common'
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { Readable } from 'node:stream'
 import path from 'node:path'
 import type { Express } from 'express'
 import { safeDownloadName } from './storage-policy.js'
@@ -64,6 +66,24 @@ export class StorageService {
       return Buffer.from(await response.Body.transformToByteArray())
     }
     return readFile(this.resolveLocalPath(key))
+  }
+
+  /**
+   * Streams a stored object instead of buffering it in memory. Used by every
+   * download route; `read()` stays for exports that need the complete bytes.
+   */
+  async openReadStream(key: string): Promise<Readable> {
+    if (this.driver === 's3') {
+      if (!this.s3) throw new ServiceUnavailableException('Object storage is not configured.')
+      const response = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }))
+      if (!response.Body) throw new Error('Stored object has no response body.')
+      return Readable.fromWeb(response.Body.transformToWebStream() as Parameters<typeof Readable.fromWeb>[0])
+    }
+
+    const fullPath = this.resolveLocalPath(key)
+    // Fail before any response headers are written when the object has gone missing.
+    await access(fullPath)
+    return createReadStream(fullPath)
   }
 
   async remove(key: string): Promise<void> {

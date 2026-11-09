@@ -1,6 +1,6 @@
 # 收发作业系统 demo — API 接口文档（v1）
 
-本文档与 `apps/api/src` 中的实现一一对应，覆盖全部 22 个接口。设计说明见
+本文档与 `apps/api/src` 中的实现一一对应，覆盖全部 24 个接口（含 1 个无鉴权健康检查）。设计说明见
 [设计规格](superpowers/specs/2026-11-08-homework-collect-demo-design.md)，实施阶段见
 [实施计划](superpowers/plans/2026-11-08-homework-collect-demo.md)。
 
@@ -13,7 +13,7 @@
   { "code": "OK", "message": "ok", "data": { }, "requestId": "..." }
   ```
 
-  前端只消费 `data`。`GET /classes/current` 在尚未初始化班级时返回 `null`（空响应体），这是唯一的信封例外。
+  前端只消费 `data`。空结果统一以 `data: null` 的 JSON 信封返回（例如 `GET /classes/current` 在尚未初始化班级时），不再使用空响应体。
   文件下载接口直接返回二进制流，不使用信封，通过 `Content-Disposition: attachment; filename*=UTF-8''...` 给出文件名。
 - **错误信封**：
 
@@ -29,8 +29,9 @@
   | 404 | `NOT_FOUND` | 分享码/回执码/资源不存在，或作业已关闭 |
   | 409 | `CONFLICT` | 班级重复初始化、重复接龙、作业状态冲突、分组重名 |
   | 413 | `FILE_TOO_LARGE` | 上传或导出超过上限 |
-  | 422 | `VALIDATION_ERROR` | DTO 校验失败 |
-  | 503 | `SERVICE_UNAVAILABLE` | 服务端未配置 `DEMO_ADMIN_TOKEN` |
+  | 422 | `VALIDATION_ERROR` | 保留的兼容映射；当前 ValidationPipe 统一返回 400，不会产生 422 |
+  | 429 | `RATE_LIMITED` | 触发限流，响应带 `Retry-After`（秒） |
+  | 503 | `SERVICE_UNAVAILABLE` | 服务端未配置 `DEMO_ADMIN_TOKEN`，或健康检查连不上数据库 |
   | 500 | `INTERNAL_ERROR` | 未预期错误 |
 
 - **鉴权方式**（每个接口在下文单独标注）：
@@ -71,7 +72,7 @@ docker compose up --build     # 访问 http://localhost:8080
 Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、API、Web；API 带健康检查，Web 在 API 健康后才启动，避免启动竞态导致首次访问 502。上传文件保存在 `homework-uploads` 卷。nginx 的 `client_max_body_size` 设为 `210m`，与后端 `files: 10` × `MAX_UPLOAD_BYTES`（默认 20 MiB）对齐，避免合法的多个大附件被反向代理以 413 拒绝；若调大 `MAX_UPLOAD_BYTES`，需同步调整 `apps/web/nginx.conf`。
 数据库结构由 `apps/api/prisma/migrations/` 下的版本化 SQL 管理：在 `apps/api` 目录执行
 `npx prisma migrate dev --name <change>` 生成新迁移并提交 `migration.sql`，部署时由 `db:deploy` 按序应用。
-两组 E2E 通过 `apps/api/test/migrations.ts` 按目录顺序执行同一批迁移 SQL，测试库结构与部署结果一致，无需再维护手工建表脚本。
+三组 E2E 通过 `apps/api/test/migrations.ts` 按目录顺序执行同一批迁移 SQL，测试库结构与部署结果一致，无需再维护手工建表脚本。
 
 生产环境应把 `STORAGE_DRIVER=s3` 并配置私有 S3 兼容桶（`S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、
 `S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`），对外通过 HTTPS 反向代理，数据库与对象存储均需持久化与备份。
@@ -90,6 +91,15 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 | `UPLOAD_DIR` | `var/uploads` | 本地私有上传目录 |
 | `MAX_UPLOAD_BYTES` | `20971520` | multer 单文件上限 |
 | `MAX_EXPORT_BYTES` | `209715200` | ZIP 导出总大小安全上限 |
+| `RATE_LIMIT_ENABLED` | `true` | 关闭后不再限流 |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | 滑动窗口长度（毫秒） |
+| `RATE_LIMIT_PUBLIC_MAX` | `600` | 每窗口公开/能力链接路由每 IP 最大请求数 |
+| `RATE_LIMIT_ADMIN_MAX` | `300` | 每窗口管理路由每 IP 最大请求数 |
+| `AUDIT_LOG_ENABLED` | `true` | 关闭后不输出结构化操作审计日志 |
+
+限流为**单实例进程内**实现；经 nginx 反代时所有访客共享代理 IP，因此公开桶默认值较宽松，可按班级规模调整。
+`GET /health` 不参与限流。审计日志每行一条 JSON，含 `requestId`、方法、路由模板、角色类别、状态码与耗时，
+路由中的 `shareCode` / `receiptCode` 会被替换为 `:token`，不记录令牌、正文或学生数据。
 
 验证命令：`npm test`（单元 + 组件 + PostgreSQL 协议 E2E）、`npm run typecheck`、`npm run build`、`npm run db:validate`、
 `npm audit`、`npm ci --dry-run`。端到端测试使用 PGlite 提供的 PostgreSQL 协议端点，无需独立数据库服务；
@@ -107,7 +117,7 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 ### 3.2 `GET /classes/current` — 查询当前班级
 
 - **鉴权**：管理令牌
-- **响应 200**：`{ classId, name, studentCount }`；未初始化时返回 `null`。
+- **响应 200**：`{ classId, name, studentCount }`；未初始化时仍返回标准信封，其中 `data` 为 `null`。
 - **错误**：`401` 令牌无效。E2E 以此接口验证无令牌访问被拒。
 
 ### 3.3 `GET /classes/{classId}/students` — 分页查询名单
@@ -257,13 +267,36 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 - **鉴权**：管理令牌
 - **查询参数**：`fileId`（必填）
 - **响应 200**：附件二进制流，文件名经安全化处理。
-- **规则**：校验 `fileId` 同时属于该作业和该提交，防止跨作业越权。
+- **规则**：校验 `fileId` 同时属于该作业和该提交，防止跨作业越权；历史版本的 `fileId` 同样可下载。
 - **错误**：`401` 无令牌；`404` 文件不存在。
 
 ### 3.15 `GET /files/{fileId}/download` — 通用附件下载
 
 - **鉴权**：`receiptCode`（查询参数）或 `X-Demo-Admin-Token`（请求头），任一有效即可
 - **响应 200**：附件二进制流；**404** 凭据不匹配或文件不存在（不泄露文件是否存在）。
+- **规则**：管理令牌与所有管理接口使用同一套强度校验（≥32 位、非示例值、恒定时间比较）；
+  `receiptCode` 同样使用恒定时间比较。附件以流方式返回，不整文件读入内存。
+
+### 3.16 `GET /submissions/{submissionId}/versions` — 提交版本历史
+
+- **鉴权**：管理令牌
+- **响应 200**：
+
+  ```json
+  { "submissionId": "...", "currentVersion": 2,
+    "items": [ { "version": 2, "submittedAt": "...", "textContent": "答案：43",
+                 "files": [ { "id": "...", "originalName": "answer-v2.pdf", "contentType": "application/pdf", "sizeBytes": 42 } ] },
+               { "version": 1, "submittedAt": "...", "textContent": "答案：42", "files": [ ... ] } ] }
+  ```
+
+  按版本号倒序；每个版本的 `files[].id` 可传给 3.14 / 4.7 的下载接口读取历史附件。
+- **错误**：`401` 令牌无效；`404` 提交不存在。
+
+### 3.17 `GET /health` — 就绪检查
+
+- **鉴权**：无（不参与限流，也不要求管理令牌）
+- **响应 200**：`{ "status": "ok" }`（包裹在统一信封内），且已成功执行数据库探活。
+- **错误**：`503` 数据库不可达。Docker Compose 的 API healthcheck 用本接口判断就绪，Web 在 API 健康后才启动。
 
 ## 4. 学生端公开接口
 
@@ -303,8 +336,9 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 
 - **规则**：学号 + 姓名必须与冻结名单匹配（同名不唯一时要求提供学号）；同一学生重复提交会递增 `version`、
   保留历史版本文件、复用同一 `receiptCode` 并清除旧反馈；文件按随机对象键存储，原始文件名只用于下载显示。
-- **错误**：`400` 身份不匹配/姓名歧义/非目标学生/类型或大小不符/内容为空；`404` 分享码无效或作业已关闭；
-  `409` 并发冲突；`413` 超过 `MAX_UPLOAD_BYTES`。
+- **错误**：`400` 身份不匹配/姓名歧义/非目标学生/类型或大小不符/内容为空、`submissionMode=text` 时携带附件、
+  表单字段类型或长度不合法（`textContent` 上限 20000 字符、拒绝未知字段，此时信封 `code` 为 `VALIDATION_ERROR`）；
+  `404` 分享码无效或作业已关闭；`409` 并发冲突；`413` 超过 `MAX_UPLOAD_BYTES`。
 
 ### 4.3 `POST /public/assignments/{shareCode}/check-ins` — 签到
 
@@ -337,16 +371,20 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
   { "assignment": { "id": "...", "title": "...", "type": "online", "dueAt": "..." },
     "submittedAt": "...", "version": 2, "textContent": "答案：43",
     "files": [ { "id": "...", "originalName": "answer-v2.pdf", "contentType": "application/pdf", "sizeBytes": 42 } ],
-    "feedback": { "id": "...", "score": 95, "feedbackText": "步骤清晰。", "reviewedAt": "..." } }
+    "feedback": { "id": "...", "score": 95, "feedbackText": "步骤清晰。", "reviewedAt": "..." },
+    "versions": [ { "version": 2, "submittedAt": "...", "textContent": "答案：43", "files": [ ... ] },
+                  { "version": 1, "submittedAt": "...", "textContent": "答案：42", "files": [ ... ] } ] }
   ```
 
-  `feedback` 未批改时为 `null`；`files` 仅为最新版本的附件。
+  `feedback` 未批改时为 `null`；`files` 仅为最新版本的附件；`versions` 按版本号倒序给出本人历次提交
+  （含各版本附件 id，可传给 4.7 下载历史附件）。`versions` 为追加字段，旧客户端忽略即可。
 - **错误**：`404` 回执码无效。
 
 ### 4.7 `GET /public/files/{fileId}/download` — 本人附件下载
 
 - **鉴权**：`receiptCode`（查询参数）
-- **响应 200**：附件二进制流。
+- **响应 200**：附件二进制流（流式返回，带 `Content-Length`）。
+- **规则**：历史版本的 `fileId` 同样可下载，只要回执码属于该提交。
 - **错误**：`404` 回执码与文件所属提交不匹配（阻止越权下载他人作业）。
 
 ## 5. 安全与边界说明
@@ -358,10 +396,15 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 - CSV 导出对以 `= + - @` 开头的单元格加前缀，避免表格软件公式注入；ZIP 目录名同样做过安全化。
 - 公开接口不提供全班名单；身份错误、非目标学生、无效分享码统一返回不可区分的错误，避免枚举。
 - 所有响应带 `requestId`（由中间件生成），便于日志追踪。
-- **未实现速率限制与防爆破**：管理令牌、分享码、回执码的尝试次数不受限；公网暴露前必须补充限流与失败锁定。
-- **能力链接无过期与撤销机制**：`shareCode` / `receiptCode` 生成后长期有效；关闭作业只停止公开操作，不作废已有回执码，链接泄露后无法单独吊销。
-- **管理令牌无轮换、无审计日志**：`DEMO_ADMIN_TOKEN` 是静态环境变量，轮换需重启服务；除 `requestId` 外没有操作审计记录。
-- 上述三项是 demo 明确接受的安全边界，**试点承载真实学生数据前必须补齐并重新评估**。
+- **已实现基础限流与防爆破**：单实例进程内滑动窗口，公开/管理两类路由分桶，超限返回 `429 RATE_LIMITED` 并带
+  `Retry-After`。默认较宽松，可通过 `RATE_LIMIT_*` 调整或用 `RATE_LIMIT_ENABLED=false` 关闭；**未实现失败账号锁定**，
+  多实例部署需换成共享存储（如 Redis）的限流器。
+- **已实现结构化操作审计日志**：每次请求完成后输出一行 JSON（`requestId`、方法、路由模板、角色类别、状态码、耗时），
+  能力链接片段替换为 `:token`；不落库、不记录令牌或正文，长期留存需在正式版接入日志平台。
+- **能力链接仍无过期与撤销机制**：`shareCode` / `receiptCode` 生成后长期有效；关闭作业只停止公开操作，不作废已有回执码，
+  链接泄露后无法单独吊销。补齐需要数据模型与运维流程变更，属正式版范围。
+- **管理令牌仍无轮换**：`DEMO_ADMIN_TOKEN` 是静态环境变量，轮换需重启服务。
+- 上述后两项是 demo 明确接受的安全边界，**试点承载真实学生数据前必须补齐并重新评估**。
 
 ## 6. 已知限制
 
@@ -372,3 +415,7 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
   PGlite 协议端点与 Prisma CLI 引擎不兼容（P1001）未能离线完成，需在真实部署验证中补做。
 - 本环境未安装 Docker/独立 PostgreSQL 服务，因此未执行镜像构建与真实数据库部署验证；
   E2E 使用 PGlite 提供的 PostgreSQL 协议端点覆盖完整业务链路。
+- 单文件附件下载已改为流式；**ZIP 导出仍在内存中一次性组装**，由 `MAX_EXPORT_BYTES`（默认 200 MB）兜底，
+  附件总量很大时应改为流式打包或后台任务。同名附件会自动追加 `-2`、`-3` 后缀，不再导致导出失败。
+- 限流与审计均为单实例进程内/本地日志实现；水平扩容时需引入共享限流存储与集中日志。
+- JSON 请求体沿用 Nest/Express 默认 100 KB 上限，`PUT /classes/{classId}/students` 单次导入以单班规模为设计前提。

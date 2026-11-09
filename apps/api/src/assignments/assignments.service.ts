@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import type { Express } from 'express'
 import { formatMissingMentions } from '@homework/contracts'
+import { compareSecrets, isValidAdminToken } from '../common/admin-token.js'
 import { PrismaService } from '../prisma/prisma.service.js'
 import { formatSafeFolderName, getSubmissionStatus, resolveStudent } from './assignment-policy.js'
 import { ExportsService } from '../exports/exports.service.js'
@@ -41,7 +42,7 @@ export class AssignmentsService {
     if (query.state && !['draft', 'published', 'closed'].includes(query.state)) {
       throw new BadRequestException('state must be draft, published, or closed.')
     }
-    const page = Math.max(1, Number.parseInt(query.page ?? '1', 10) || 1)
+    const page = Math.min(100000, Math.max(1, Number.parseInt(query.page ?? '1', 10) || 1))
     const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize ?? '20', 10) || 20))
     const where = {
       ...(query.type ? { type: query.type as never } : {}),
@@ -197,6 +198,7 @@ export class AssignmentsService {
     const access = validateSubmissionAccess(assignment.state, assignment.targets.map((target) => target.studentId), student.id)
     if (access === 'not-targeted') throw new BadRequestException('This student is not included in the assignment audience.')
     if (access !== 'allowed') throw new ConflictException('This assignment is not accepting submissions.')
+    if (assignment.submissionMode === 'text' && files.length) throw new BadRequestException('This assignment only accepts text submissions.')
     if (files.length > assignment.maxFileCount) throw new BadRequestException(`Choose no more than ${assignment.maxFileCount} files.`)
     if (files.some((file) => file.size > assignment.maxFileBytes)) {
       throw new BadRequestException(`Each file must be no larger than ${Math.floor(assignment.maxFileBytes / 1024 / 1024)} MB.`)
@@ -368,7 +370,7 @@ export class AssignmentsService {
       include: {
         assignment: { select: { id: true, title: true, type: true, dueAt: true } },
         feedback: true,
-        versions: { orderBy: { version: 'desc' }, take: 1, include: { files: { select: { id: true, originalName: true, contentType: true, sizeBytes: true } } } },
+        versions: { orderBy: { version: 'desc' }, include: { files: { select: { id: true, originalName: true, contentType: true, sizeBytes: true } } } },
       },
     })
     if (!submission) throw new NotFoundException('Submission receipt not found.')
@@ -379,6 +381,43 @@ export class AssignmentsService {
       textContent: submission.textContent,
       files: submission.versions[0]?.files ?? [],
       feedback: submission.feedback,
+      versions: submission.versions.map((version) => ({
+        version: version.version,
+        submittedAt: version.submittedAt,
+        textContent: version.textContent,
+        files: version.files,
+      })),
+    }
+  }
+
+  /** Teacher-side history for a single submission; file ids can be downloaded via the existing protected routes. */
+  async listVersions(submissionId: string) {
+    const submission = await this.prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: {
+        id: true,
+        version: true,
+        versions: {
+          orderBy: { version: 'desc' },
+          select: {
+            version: true,
+            textContent: true,
+            submittedAt: true,
+            files: { select: { id: true, originalName: true, contentType: true, sizeBytes: true } },
+          },
+        },
+      },
+    })
+    if (!submission) throw new NotFoundException('Submission not found.')
+    return {
+      submissionId: submission.id,
+      currentVersion: submission.version,
+      items: submission.versions.map((version) => ({
+        version: version.version,
+        submittedAt: version.submittedAt,
+        textContent: version.textContent,
+        files: version.files,
+      })),
     }
   }
 
@@ -471,37 +510,30 @@ export class AssignmentsService {
       include: { version: { include: { submission: { select: { receiptCode: true } } } } },
     })
     if (!file) throw new NotFoundException('File not found.')
-    const hasAdminAccess = this.isValidAdminToken(adminToken)
-    if (!hasAdminAccess && (!receiptCode || receiptCode !== file.version.submission.receiptCode)) {
+    const hasAdminAccess = isValidAdminToken(adminToken)
+    if (!hasAdminAccess && !compareSecrets(receiptCode, file.version.submission.receiptCode)) {
       throw new NotFoundException('File not found.')
     }
     return {
-      content: await this.storage.read(file.storageKey),
+      content: await this.storage.openReadStream(file.storageKey),
       contentType: file.contentType,
       downloadName: safeDownloadName(file.originalName),
+      sizeBytes: file.sizeBytes,
     }
   }
 
   async getSubmissionDownload(assignmentId: string, submissionId: string, fileId: string) {
     const file = await this.prisma.submissionFile.findFirst({
       where: { id: fileId, version: { submission: { id: submissionId, assignmentId } } },
-      select: { storageKey: true, contentType: true, originalName: true },
+      select: { storageKey: true, contentType: true, originalName: true, sizeBytes: true },
     })
     if (!file) throw new NotFoundException('File not found.')
     return {
-      content: await this.storage.read(file.storageKey),
+      content: await this.storage.openReadStream(file.storageKey),
       contentType: file.contentType,
       downloadName: safeDownloadName(file.originalName),
+      sizeBytes: file.sizeBytes,
     }
-  }
-
-  isValidAdminToken(value?: string): boolean {
-    const expected = process.env.DEMO_ADMIN_TOKEN
-    if (!expected || expected === 'generate-a-random-token-before-running' || !value) return false
-    const left = Buffer.from(expected)
-    const right = Buffer.from(value)
-    if (left.length !== right.length) return false
-    return timingSafeEqual(left, right)
   }
 
   async exportCsv(assignmentId: string): Promise<{ filename: string; content: Buffer }> {

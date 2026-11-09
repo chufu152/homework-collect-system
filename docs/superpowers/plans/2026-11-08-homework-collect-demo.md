@@ -100,8 +100,9 @@
 
 ---
 
-## 验收证据（2026-11-09 回填）
+## 验收证据（2026-11-09 首次回填；最新结果见文末「后端补齐轮次验收证据」）
 
+下方数字为首次回填时的快照（41 项测试、2 组 E2E）；经过后端补齐轮次后，当前为 **67 项测试、3 组 E2E**（API 54 / Web 10 / contracts 3）。
 上方 Task 1–4 的复选框在交付时未回填，实际均已实现并通过验证，故统一标记为完成。证据如下：
 
 - `npm test`：**41 项全部通过**（API 28 / Web 10 / contracts 3），其中两组 PostgreSQL 协议 E2E 覆盖
@@ -115,3 +116,20 @@
 - 全量 `npm audit` 仍有 4 个 dev 依赖链中危告警（`js-beautify → glob/minimatch`），
   已评估并记为「仅开发依赖、生产 0 漏洞、接受风险」，详见 `docs/handoff-prompt.md` 第 5 节 P0-2。
 - 版本化迁移已于 2026-11-09 补齐（`prisma/migrations` + `db:deploy` + E2E 单一事实来源）；后续改进（真实部署验证、限流、流式导出、版本历史 UI、正式版）按 `docs/handoff-prompt.md` 第 5 节的优先级推进。
+
+### 后端补齐轮次验收证据（2026-11-09，本轮不动前端）
+
+- 完成 P1 中的后端部分：基础限流 + 结构化审计日志、提交版本历史接口与回执 `versions`、单文件附件流式下载、
+  `GET /health` 就绪检查、优雅关闭；同步修复 multipart 提交 DTO 校验、上传超限 413 信封、
+  `text` 模式误收附件、管理令牌强度不一致（`/files` 路由不再接受示例/短令牌）、ZIP 同名附件去重、分页上限。
+- 修复统一响应信封的最后一处例外：`GET /classes/current` 未初始化时不再返回空响应体，而是 `{ code:'OK', data:null }`；
+  新增 `response.interceptor.spec.ts`（4 项）与 `core.e2e.spec.ts` 的回归断言。`@Res()` 二进制下载保持信封外直通。
+- 新增 `test/backend-completion.e2e.spec.ts` 覆盖健康检查、字段校验、413、版本历史、历史附件流式下载、
+  同名附件 ZIP 导出与凭据隔离；新增后端 spec 覆盖限流器、审计、令牌、DTO、ZIP、存储流、健康检查与响应信封。
+- 额外做了编译产物运行时验收：以 PGlite 提供 PostgreSQL 协议端点，直接启动 `apps/api/dist/main.js`，
+  验证 health 200 / 无令牌 401 / 空班级 `data:null` / 初始化 201 / 作业列表 200 / 名单导入 200 / 发布作业 201；
+  脚本在 `apps/api/var/`（已忽略），非仓库交付物。
+- 接口由 22 个增至 24 个（新增 `GET /health`、`GET /submissions/{id}/versions`）；`docs/api.md`、本文件、
+  spec 与 `.env.example`、`docker-compose.yml` 已同步；**未改动 `apps/web` 下任何文件**。
+- 仍待确认/遗留：真实 Docker + PostgreSQL 上的 `migrate deploy` 与 shadow diff；ZIP 导出仍为内存组装；
+  能力链接过期/撤销、管理令牌轮换、失败账号锁定、多实例共享限流与集中日志（正式版范围）。

@@ -2,8 +2,9 @@ import { Body, Controller, Get, Headers, Param, Patch, Post, Put, Query, Res, Up
 import { AnyFilesInterceptor } from '@nestjs/platform-express/multer/interceptors/any-files.interceptor'
 import type { Express, Response } from 'express'
 import { AdminGuard } from '../common/admin.guard.js'
+import { sendDownload } from '../common/file-response.js'
 import { AssignmentsService } from './assignments.service.js'
-import { AssignmentStateDto, CompletionDto, CreateAssignmentDto, FeedbackDto, RelayEntryDto, StudentLookupDto } from './assignments.dto.js'
+import { AssignmentStateDto, CompletionDto, CreateAssignmentDto, FeedbackDto, RelayEntryDto, StudentLookupDto, SubmitDto } from './assignments.dto.js'
 
 @Controller()
 @UseGuards(AdminGuard)
@@ -42,11 +43,12 @@ export class AssignmentsController {
     @Query('fileId') fileId: string,
     @Res() response: Response,
   ): Promise<void> {
-    const file = await this.assignments.getSubmissionDownload(assignmentId, submissionId, fileId)
-    response.setHeader('Content-Type', file.contentType)
-    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.downloadName)}`)
-    response.setHeader('Content-Length', file.content.byteLength)
-    response.send(file.content)
+    sendDownload(response, await this.assignments.getSubmissionDownload(assignmentId, submissionId, fileId))
+  }
+
+  @Get('submissions/:submissionId/versions')
+  versions(@Param('submissionId') submissionId: string) {
+    return this.assignments.listVersions(submissionId)
   }
 
   @Patch('submissions/:submissionId/feedback')
@@ -81,10 +83,7 @@ export class AssignmentsController {
     const contentType = format === 'csv' ? 'text/csv; charset=utf-8'
       : format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         : 'application/zip'
-    response.setHeader('Content-Type', contentType)
-    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`)
-    response.setHeader('Content-Length', file.content.byteLength)
-    response.send(file.content)
+    sendDownload(response, { content: file.content, contentType, downloadName: file.filename, sizeBytes: file.content.byteLength })
   }
 }
 
@@ -106,7 +105,7 @@ export class PublicAssignmentsController {
   }))
   submit(
     @Param('shareCode') shareCode: string,
-    @Body() input: { studentNo?: string; studentName?: string; textContent?: string },
+    @Body() input: SubmitDto,
     @UploadedFiles() files: Express.Multer.File[] = [],
   ) {
     return this.assignments.submit(shareCode, input, files ?? [])
@@ -148,11 +147,7 @@ export class PublicFilesController {
     @Query('receiptCode') receiptCode: string,
     @Res() response: Response,
   ): Promise<void> {
-    const file = await this.assignments.getDownload(fileId, receiptCode)
-    response.setHeader('Content-Type', file.contentType)
-    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.downloadName)}`)
-    response.setHeader('Content-Length', file.content.byteLength)
-    response.send(file.content)
+    sendDownload(response, await this.assignments.getDownload(fileId, receiptCode))
   }
 }
 
@@ -167,11 +162,7 @@ export class FilesController {
     @Headers('x-demo-admin-token') adminToken: string | undefined,
     @Res() response: Response,
   ): Promise<void> {
-    const file = await this.assignments.getDownload(fileId, receiptCode, adminToken)
-    response.setHeader('Content-Type', file.contentType)
-    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.downloadName)}`)
-    response.setHeader('Content-Length', file.content.byteLength)
-    response.send(file.content)
+    sendDownload(response, await this.assignments.getDownload(fileId, receiptCode, adminToken))
   }
 }
 

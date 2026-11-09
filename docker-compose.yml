@@ -54,8 +54,8 @@ services:
     expose:
       - "3000"
     healthcheck:
-      # Any HTTP response (401 without a token, or 503 when the token is unset) means Nest is listening.
-      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:3000/api/v1/classes/current\").then(()=>process.exit(0)).catch(()=>process.exit(1))'"]
+      # Readiness checks the database too; a listening API with a broken DB is not healthy.
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://127.0.0.1:3000/api/v1/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"]
       interval: 5s
       timeout: 5s
       retries: 12

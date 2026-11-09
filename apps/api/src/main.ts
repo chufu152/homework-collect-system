@@ -21,6 +21,7 @@ async function bootstrap(): Promise<void> {
     stopAtFirstError: false,
   }))
   app.useGlobalFilters(new HttpExceptionEnvelopeFilter())
+  app.enableShutdownHooks()
   const port = Number(process.env.API_PORT ?? 3000)
   await app.listen(port, process.env.API_HOST ?? '127.0.0.1')
 }

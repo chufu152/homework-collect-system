@@ -15,8 +15,22 @@ export async function createZipArchive(entries: readonly ZipArchiveEntry[]): Pro
       throw new Error('Invalid ZIP entry path.')
     }
     const safeParts = pathParts.map((part, index) => index === pathParts.length - 1 ? safeDownloadName(part) : part.replace(/[<>:"|?*\u0000-\u001f\u007f]/g, '-'))
-    const safePath = safeParts.join('/')
-    if (Object.prototype.hasOwnProperty.call(files, safePath)) throw new Error('Duplicate ZIP entry path.')
+    // Two uploads may legitimately share a file name (or two students may share
+    // a folder name). Keep both by appending a numeric suffix instead of
+    // failing the whole export with an opaque 500.
+    const basePath = safeParts.join('/')
+    let safePath = basePath
+    if (Object.prototype.hasOwnProperty.call(files, safePath)) {
+      const separator = safePath.lastIndexOf('/')
+      const dot = safePath.lastIndexOf('.')
+      const stem = dot > separator + 1 ? safePath.slice(0, dot) : safePath
+      const extension = dot > separator + 1 ? safePath.slice(dot) : ''
+      let suffix = 2
+      do {
+        safePath = `${stem}-${suffix}${extension}`
+        suffix += 1
+      } while (Object.prototype.hasOwnProperty.call(files, safePath))
+    }
     files[safePath] = new Uint8Array(entry.content)
   }
   return Buffer.from(zipSync(files, { level: 6 }))

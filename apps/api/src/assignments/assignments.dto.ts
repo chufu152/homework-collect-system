@@ -102,6 +102,18 @@ export class RelayEntryDto extends StudentLookupDto {
   content?: string
 }
 
+/**
+ * Multipart fields for an online submission. Using a DTO (instead of an inline
+ * object type) makes the global ValidationPipe apply whitelist + length rules,
+ * so malformed form fields cannot reach the service and trigger a 500.
+ */
+export class SubmitDto extends StudentLookupDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  textContent?: string
+}
+
 export class CompletionDto {
   @IsBoolean()
   completed!: boolean

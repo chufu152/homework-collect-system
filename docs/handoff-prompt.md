@@ -26,20 +26,27 @@
 - 线下完成登记（可撤销）、签到（幂等、同名需学号消歧）、接龙（稳定序号、禁止重复占位）。
 - 学生回执页：本人最新提交内容、附件下载、教师反馈。
 - 管理接口用请求头 `X-Demo-Admin-Token`（≥32 位随机值，恒定时间比较）；学生用不可预测的 `shareCode` / `receiptCode` 能力链接；公开接口不暴露全班名单。
+- 后端补齐轮次（未改前端）：单实例基础限流（公开/管理分桶、`429` + `Retry-After`）、结构化操作审计日志（能力链接脱敏）、
+  提交版本历史（`GET /submissions/{id}/versions` 与回执追加 `versions`）、单文件附件流式下载、
+  `GET /health` 数据库就绪检查与优雅关闭；并修复 multipart 提交 DTO 校验、上传超限 413 信封、
+  管理令牌强度不一致、ZIP 同名附件去重、`text` 模式误收附件、分页上限，以及
+  `GET /classes/current` 未初始化时返回空响应体（现统一为 JSON 信封 `data: null`，前端无需改动即可正确判断「班级尚未创建」）。
 - 移动端适配的 Vue 前端；Docker Compose 部署配置（postgres / migrate / api / web + nginx 反代）。
 
 明确不在当前范围：多班级、账号注册/登录、JWT/RBAC、学生实名身份绑定、公网发布、真实敏感学生数据承载。
 
 ### 1.3 当前状态（截至 2026-11-09）
 
-- 阶段 0–4（规划、基线、后端、前端、验收）**已完成并推送**；阶段 5「正式版」未开始。
-- 默认分支 `main`，本地 `main` 跟踪 `origin/main`，工作区干净，远端 `main` 与本地 HEAD 一致。提交历史共 **7 个**：前四个为阶段交付，第五个加入本文，第六个为首轮 P0/P1 改进（部署配置、共享 E2E DDL、回执页测试、计划回填与安全边界标注），第七个为版本化迁移与 E2E 单一事实来源改造。
-  `000be38` 规划 → `97ffde0` 工作区与领域规则 → `d9ef8ee` 完整实现 → `ddde3a2` 接口文档 → `896430d` 接管提示词 → `e4aacdd` 首轮 P0/P1 改进 → 第 7 个提交为版本化迁移。
-  请务必以 `git log --oneline -8` 与 `git ls-remote --heads origin` 的**实际输出**为准，不要假定 SHA 不变。
+- 阶段 0–4（规划、基线、后端、前端、验收）**已完成并推送**；阶段 5「正式版」未开始。后端已按 P1 补齐并完成独立验收，前端保持本轮之前的交付状态。
+- 默认分支 `main`，本地 `main` 跟踪 `origin/main`，工作区干净，远端 `main` 与本地 HEAD 一致。提交历史共 **8 个**：前四个为阶段交付，第五个加入本文，第六个为首轮 P0/P1 改进（部署配置、共享 E2E DDL、回执页测试、计划回填与安全边界标注），第七个为版本化迁移与 E2E 单一事实来源改造，第八个为后端补齐轮次。
+  `000be38` 规划 → `97ffde0` 工作区与领域规则 → `d9ef8ee` 完整实现 → `ddde3a2` 接口文档 → `896430d` 接管提示词 → `e4aacdd` 首轮 P0/P1 改进 → `ffb6b83` 版本化迁移 → 第 8 个提交为后端补齐。
+  请务必以 `git log --oneline -9` 与 `git ls-remote --heads origin` 的**实际输出**为准，不要假定 SHA 不变。
 - 技术栈：Node.js 22 + npm workspaces；`apps/api` = NestJS 12 + Prisma 7 + PostgreSQL 16；`apps/web` = Vue 3 + TypeScript + Vite 6 + Vue Router；`packages/contracts` = 共享领域纯函数；Vitest 5 + @vue/test-utils + PGlite（提供 PostgreSQL 协议端点做 E2E）；文件存储支持本地私有目录或 S3 兼容对象存储。
-- 验证结果（版本化迁移提交前全量重跑）：`npm test` **41 项**全部通过（API 28 / Web 10 / contracts 3，含 2 组 E2E 直接执行真实迁移 SQL）；`npm run typecheck`、`npm run build`、`npm run db:validate`、`npm ci --dry-run` 全部通过；编译产物 `apps/api/dist` 可正常加载；`npm audit --omit=dev` 为 0 漏洞（该命令偶发因审计端点网络卡顿，重试即可）。
+- 验证结果（后端补齐轮次全量重跑）：`npm test` **67 项**全部通过（API 54 / Web 10 / contracts 3，含 3 组 E2E 直接执行真实迁移 SQL）；`npm run typecheck`、`npm run build`、`npm run db:validate`、`npm ci --dry-run`、`git diff --check` 全部通过；`npm audit --omit=dev` 为 0 漏洞（该命令偶发因审计端点网络卡顿，重试即可）。另外用 PGlite 协议端点 + `apps/api/dist/main.js` 做过一次真实进程运行时冒烟：健康检查 200、无令牌 401、空班级 `data: null`、初始化 201、作业列表 200、名单导入 200、发布作业 201 全部通过。**该冒烟脚本位于被忽略的 `apps/api/var/`，不是仓库交付物。**
 - 已知限制：本机没有 Docker 与独立 PostgreSQL 服务，**镜像构建与真实数据库部署未验证**，E2E 用 PGlite 覆盖完整链路；全量 `npm audit` 仍有 4 个中危，全部来自 dev 依赖链 `@vue/test-utils@2.4.11 → js-beautify → glob/minimatch`，`npm audit fix` 与升级 test-utils 均无法在不破坏工具链的前提下消除，生产依赖不受影响；本轮评估结论为「仅开发依赖、生产 0 漏洞、接受风险」，证据见第 5 节 P0-2，待用户最终确认。版本化迁移已生成但**未在真实 PostgreSQL 上执行 `migrate deploy`**，见第 5 节 P0-1。
-- 安全边界：demo 用能力链接替代身份核验，链接泄露即可冒用，禁止用于真实敏感数据。
+- 安全边界：demo 用能力链接替代身份核验，链接泄露即可冒用，禁止用于真实敏感数据。基础限流与结构化审计日志已补齐，
+  但**能力链接仍无过期/撤销、管理令牌仍无轮换、无失败账号锁定**；限流为单实例进程内实现，多实例需共享存储。
+  单文件下载已流式，ZIP 导出仍受 `MAX_EXPORT_BYTES` 约束在内存中组装。详见 `docs/api.md` 第 5、6 节。
 
 ---
 
@@ -53,7 +60,7 @@
 
 | 路径 | 内容 |
 |---|---|
-| `docs/api.md` | **接口契约**：全部 22 个接口的请求方式、路径、参数、返回结构、鉴权标注、错误码；另含本地/Docker 启动步骤、环境变量表、验证命令、安全边界与已知限制 |
+| `docs/api.md` | **接口契约**：全部 24 个接口的请求方式、路径、参数、返回结构、鉴权标注、错误码；另含本地/Docker 启动步骤、环境变量表、验证命令、安全边界与已知限制 |
 | `docs/superpowers/specs/2026-11-08-homework-collect-demo-design.md` | 意图、范围、技术约束、核心数据与状态、验收标准；以及技术栈选型与理由、角色与权限设计、开发阶段与交付物、E2E 覆盖范围 |
 | `docs/superpowers/plans/2026-11-08-homework-collect-demo.md` | Task 1–4 的逐步实施计划与 Review Focus；Task 复选框已于 2026-11-09 全部回填，并附「验收证据」段落（含未验证项说明） |
 | `docs/handoff-prompt.md` | 本接管提示词（供交接使用，不是需求文档）。**已纳入仓库并推送到 `main`**，clone 后可直接读取 |
@@ -64,13 +71,14 @@
 - `apps/api/prisma/migrations/<timestamp>_init/migration.sql` + `migration_lock.toml`：版本化初始迁移，由 `prisma migrate diff --from-empty --to-schema=prisma/schema.prisma --script` 生成；Compose 的 `migrate` 服务用 `prisma migrate deploy` 应用。
 - `apps/api/prisma/schema.prisma`：全部数据模型（班级、学生、分组/成员、作业/冻结目标、提交/版本/文件、反馈、完成记录、签到、接龙）。
 - `apps/api/src/main.ts`、`app.module.ts`：全局前缀 `/api/v1`、CORS、ValidationPipe、统一异常信封。
-- `apps/api/src/common/`：`admin.guard.ts`、响应拦截器、异常过滤器、requestId 中间件。
-- `apps/api/src/classes/`、`assignments/`：22 个接口对应的 controller / DTO / service 与纯业务规则（`assignment-policy.ts`、`workflows.ts`）。
-- `apps/api/src/storage/`、`exports/`：本地/S3 存储适配器、上传校验、ZIP/DOCX/CSV 导出。
+- `apps/api/src/common/`：`admin.guard.ts`、响应拦截器、异常过滤器、requestId 中间件；另有 `admin-token.ts`（凭据强度唯一来源）、`rate-limit.ts` / `rate-limit.middleware.ts`（限流）、`audit.middleware.ts`（结构化审计）、`file-response.ts`（流式下载统一响应头）。
+- `apps/api/src/classes/`、`assignments/`：24 个接口对应的 controller / DTO / service 与纯业务规则（`assignment-policy.ts`、`workflows.ts`）；`submit` 使用 `SubmitDto` 校验 multipart 字段，`listVersions` 提供教师侧版本历史。
+- `apps/api/src/health/health.controller.ts`：数据库就绪检查 `GET /api/v1/health`（无鉴权、不限流）。
+- `apps/api/src/storage/`、`exports/`：本地/S3 存储适配器（`read()` 用于导出、`openReadStream()` 用于下载）、上传校验、ZIP/DOCX/CSV 导出。
 - `apps/api/prisma.config.ts`、`src/prisma/prisma.service.ts`：Prisma 7 PostgreSQL adapter 配置。
 - `apps/api/src/generated/prisma/`：**生成产物，已被 .gitignore 忽略**；新环境必须先跑 `npm run db:generate`，否则编译与运行会失败。
-- `apps/api/test/migrations.ts`：按目录名排序读取并执行 `prisma/migrations/*/migration.sql`，供两组 E2E 共用。
-- `apps/api/test/core.e2e.spec.ts`、`participation.e2e.spec.ts`：用 PGlite 启动真实 Nest HTTP 服务的全链路 E2E；建表来源就是上述真实迁移 SQL，**不再有手写 DDL 副本**。新增迁移后 E2E 会自动按序应用，无需改测试文件。
+- `apps/api/test/migrations.ts`：按目录名排序读取并执行 `prisma/migrations/*/migration.sql`，供三组 E2E 共用。
+- `apps/api/test/core.e2e.spec.ts`、`participation.e2e.spec.ts`、`backend-completion.e2e.spec.ts`：用 PGlite 启动真实 Nest HTTP 服务的三组全链路 E2E；建表来源就是上述真实迁移 SQL，**不再有手写 DDL 副本**。新增迁移后 E2E 会自动按序应用，无需改测试文件。第三组覆盖后端补齐轮次的新增行为。
 - `apps/web/src/router.ts`、`api/client.ts`、`views/*.vue`、`styles.css`：教师/学生全部页面与 API 客户端；`views/*.spec.ts` 为组件测试。
 - `packages/contracts/src/domain.ts`：作业类型/状态、目标名单、缺交名单等共享纯函数及其单测。
 
@@ -106,7 +114,7 @@
 在继续开发之前，按顺序完成并向用户报告结果：
 
 1. **同步与确认版本**：`git fetch origin main` → `git status --short --branch` → `git log --oneline -8` → `git ls-remote --heads origin`，确认本地与远端 `main` 一致、工作区干净；若不一致，先说明差异，不要直接覆盖。
-2. **阅读已完成部分及其位置**：按 2.1 表格顺序读完前三份需求/契约文档，再按 2.2 抽查关键实现（`schema.prisma`、两个 controller、`assignments.service.ts`、`api/client.ts`、两个 E2E 文件）。重点确认：22 个接口的路径与鉴权、冻结目标名单规则、提交版本与反馈清除逻辑、上传/下载的越权防护、导出文件名安全化。
+2. **阅读已完成部分及其位置**：按 2.1 表格顺序读完前三份需求/契约文档，再按 2.2 抽查关键实现（`schema.prisma`、两个 controller、`assignments.service.ts`、`api/client.ts`、三个 E2E 文件）。重点确认：24 个接口的路径与鉴权、冻结目标名单规则、提交版本与反馈清除逻辑、上传/下载的越权防护、导出文件名安全化。
 3. **复现现状验证**：在新环境先 `npm ci` → `npm run db:generate`，再跑 `npm test`、`npm run typecheck`、`npm run build`、`npm run db:validate`、`npm audit --omit=dev`。记录实际结果；若与 1.3 的状态描述不符，先报告差异与原因，不要假定文档有误或代码有误。
 4. **确认现有产出与进度**：向用户输出一张简短核对表——「已完成的阶段与交付物 / 未验证项 / 已知限制 / 你接下来打算从哪一条后续计划开始」，并明确询问是否按该优先级推进。**得到用户确认后才开始写代码。**
 5. **动手前的边界确认**：若用户的新需求会改变 demo 边界（引入账号体系、多班级、公网部署、真实学生数据），先出方案并确认，再实施；不要静默扩展范围。
@@ -123,11 +131,11 @@
 ### P1 — demo 健壮性与工程化债
 
 3. ~~**版本化数据库迁移**~~ **已完成（代码）**：`prisma/migrations/<timestamp>_init/migration.sql` + `migration_lock.toml` 已生成；`db:deploy` 脚本、根脚本转发与 Compose `migrate` 服务均已改为 `prisma migrate deploy`，`db:push` 仅保留给本地试改。**剩余**：真实 PostgreSQL 上的 `migrate deploy` 与 shadow database 一致性 diff 仍在 P0-1 待验证。
-4. ~~**消除 E2E 建表 SQL 漂移**~~ **已完成**：手写 `apps/api/test/schema.sql` 已删除；两组 E2E 现通过 `apps/api/test/migrations.ts` 按目录顺序执行真实 `prisma/migrations/*/migration.sql`，与 `migrate deploy` 是同一份 DDL。新增迁移会自动进入测试，彻底消除双份维护。
-5. **公开接口防护（文档标注已完成，代码仍待补齐）**：`docs/api.md` 第 5 节与 spec 技术约束已显式列出「无速率限制/防爆破、能力链接无过期与撤销、管理令牌无轮换与审计日志」。代码层面仍未实现，若要试点承载真实数据必须补齐。
-6. **大文件与导出性能**：ZIP 导出会把全部附件读入内存（默认上限 `MAX_EXPORT_BYTES=209715200`），大班集需改为流式/后台任务；下载同样为全量读入。
+4. ~~**消除 E2E 建表 SQL 漂移**~~ **已完成**：手写 `apps/api/test/schema.sql` 已删除；三组 E2E 现通过 `apps/api/test/migrations.ts` 按目录顺序执行真实 `prisma/migrations/*/migration.sql`，与 `migrate deploy` 是同一份 DDL。新增迁移会自动进入测试，彻底消除双份维护。
+5. ~~**公开接口防护的基础层**~~ **已完成（基础层）**：新增单实例进程内滑动窗口限流（公开/管理分桶、`429 RATE_LIMITED` + `Retry-After`、`RATE_LIMIT_*` 可配/可关）、结构化操作审计日志（能力链接脱敏为 `:token`），并将管理令牌强度校验统一到 `common/admin-token.ts`（修复 `/files` 路由接受示例/短令牌的问题）。`docs/api.md` 第 5 节已同步。**仍待补齐（正式版）**：能力链接过期/撤销、管理令牌轮换、失败账号锁定、多实例共享限流与集中日志。
+6. ~~**单文件下载内存占用**~~ **已完成（下载）**：三处附件下载接口改为流式响应（`StorageService.openReadStream()` + `common/file-response.ts`），不再整文件读入内存，E2E 已验证历史附件下载与 `Content-Length`。**仍待补齐**：ZIP 导出仍一次性把全部附件读入内存（默认上限 `MAX_EXPORT_BYTES=209715200`），大班集需改为流式打包或后台任务。
 7. ~~**补齐文档与测试的一致性**~~ **已完成**：实施计划 Task 1–4 复选框已全部回填并附「验收证据」段落；新增 `StudentReceiptView.spec.ts`（3 项）、`AssignmentDashboardView.spec.ts` 导出按钮用例（CSV/ZIP/DOCX）、`StudentAssignmentView.spec.ts` 接龙用例（加载名单→加入→刷新顺序）。前端现 5 个 spec / **10 项**，签到用例原本已有。
-8. **提交版本历史可视化**：后端保留 `SubmissionVersion` 与历史附件，但看板、回执与 ZIP 都只暴露最新版本；若用户需要「查看历次修改」，需新增受控接口与 UI。
+8. ~~**提交版本历史后端接口**~~ **已完成（后端）**：新增受管理令牌保护的 `GET /submissions/{id}/versions`（按版本倒序、含各版本附件 id），回执 `GET /public/submissions/{receiptCode}` 追加 `versions` 字段；历史附件可通过既有 3.14 / 4.7 下载接口读取。**仍待补齐**：前端「查看历次修改」UI（由用户后续指导，本轮未动前端）、ZIP 导出仍只打包最新版本。
 
 ### P2 — 正式版（阶段 5，需先出方案再动手）
 
@@ -141,7 +149,7 @@
 
 ## 6. 工作方式与约束
 
-- 遵循仓库现有结构与约定，不另起架构：npm workspaces、Node ESM 相对导入必须带 `.js` 扩展名、NestJS 控制器/服务/DTO 分层、Vue 组合式 API、统一响应信封 `{ code, message, data, requestId }`。
+- 遵循仓库现有结构与约定，不另起架构：npm workspaces、Node ESM 相对导入必须带 `.js` 扩展名、NestJS 控制器/服务/DTO 分层、Vue 组合式 API、统一响应信封 `{ code, message, data, requestId }`（空结果为 `data: null`，**不要**再退回空响应体；只有 `@Res()` 的二进制下载不用信封）。
 - 业务规则改动先补测试再改实现（TDD）；接口或数据模型变更必须同步 `docs/api.md` 与 spec 文档，并用 `npx prisma migrate dev --name <change>`（在 `apps/api` 目录）生成新迁移；E2E 会自动应用 `prisma/migrations`，不要再手写建表 SQL。
 - 保持 demo 边界：单班级、免登录、能力链接鉴权；不引入真实敏感学生数据，不在公开接口返回全班名单。
 - 每次交付前跑第 3 节的验证命令；推送前必须全部通过且工作区干净。
