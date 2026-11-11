@@ -4,7 +4,13 @@ export interface ApiErrorDetail {
 }
 
 export class ApiRequestError extends Error {
-  constructor(message: string, public readonly code: string, public readonly status: number) {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly status: number,
+    /** 429 响应 `Retry-After` 的秒数；无该头时为 null。 */
+    public readonly retryAfter: number | null = null,
+  ) {
     super(message)
     this.name = 'ApiRequestError'
   }
@@ -22,6 +28,74 @@ export function getAdminToken(): string {
   return sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? ''
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function invalidResponse(message: string): ApiRequestError {
+  return new ApiRequestError(message, 'INVALID_RESPONSE', 200)
+}
+
+/**
+ * C3：JSON 与二进制端点的错误响应共用同一信封解析。
+ * 只接受字符串类型的 `code` / `message`，避免信封字段类型异常破坏错误对象契约。
+ */
+function parseErrorBody(raw: string, contentType: string): { code?: string; message?: string } | null {
+  if (!contentType.includes('application/json') || !raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed)) return null
+    return {
+      code: typeof parsed.code === 'string' ? parsed.code : undefined,
+      message: typeof parsed.message === 'string' ? parsed.message : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+function retryAfterFrom(response: Response): number | null {
+  const parsed = Number.parseInt(response.headers.get('Retry-After') ?? '', 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function readListPage<T>(value: unknown, expectedPage: number): { items: T[]; total: number; page: number; pageSize: number } {
+  if (!isRecord(value)
+    || !Array.isArray(value.items)
+    || !Number.isSafeInteger(value.total)
+    || (value.total as number) < 0
+    || value.page !== expectedPage
+    || !Number.isSafeInteger(value.pageSize)
+    || (value.pageSize as number) < 1
+    || value.items.length > (value.pageSize as number)) {
+    throw invalidResponse('服务返回的列表数据不完整，请重新读取。')
+  }
+  return value as { items: T[]; total: number; page: number; pageSize: number }
+}
+
+/**
+ * C1：成功响应的 JSON 信封必须确实带 `data` 字段。
+ * `data: null` 是合法的「空结果」，而空响应体 / 非信封 JSON 不是；两者不能混为一谈，
+ * 否则调用方会把一个真值（对象或空 Blob）误判成「班级已存在」。
+ */
+async function readEnvelope<T>(response: Response): Promise<T> {
+  const raw = await response.text()
+  let envelope: unknown = null
+  try {
+    envelope = raw ? JSON.parse(raw) : null
+  } catch {
+    envelope = null
+  }
+  if (!envelope || typeof envelope !== 'object' || !Object.prototype.hasOwnProperty.call(envelope, 'data')) {
+    throw new ApiRequestError(
+      '服务返回的内容不是可识别的数据，请稍后重试；若一直如此，请联系教师检查运行环境。',
+      'INVALID_ENVELOPE',
+      response.status,
+    )
+  }
+  return (envelope as { data: T }).data
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   const token = getAdminToken()
@@ -30,15 +104,46 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, { ...init, headers })
   const contentType = response.headers.get('content-type') ?? ''
   if (!response.ok) {
-    const payload = contentType.includes('application/json') ? await response.json() : null
-    throw new ApiRequestError(payload?.message ?? `Request failed (${response.status}).`, payload?.code ?? 'REQUEST_FAILED', response.status)
+    // C1：错误信封解析失败也要保留 HTTP 状态与兜底 code，不吞掉错误码。
+    const raw = await response.text().catch(() => '')
+    const payload = parseErrorBody(raw, contentType)
+    throw new ApiRequestError(
+      payload?.message ?? `Request failed (${response.status}).`,
+      payload?.code ?? 'REQUEST_FAILED',
+      response.status,
+      retryAfterFrom(response),
+    )
   }
-  if (contentType.includes('application/json')) return (await response.json()).data as T
-  return await response.blob() as T
+  if (contentType.includes('application/json')) return readEnvelope<T>(response)
+  // C1：成功的非 JSON 响应只可能是二进制流；空 Blob 不是有效数据。
+  const blob = await response.blob()
+  if (blob.size === 0) {
+    throw new ApiRequestError('服务没有返回文件内容，请稍后重试；若一直如此，请联系教师。', 'EMPTY_RESPONSE', response.status)
+  }
+  return blob as T
+}
+
+/**
+ * C3：下载 / 导出是二进制端点，但失败时服务端仍返回 JSON 错误信封。
+ * 解析信封以保留 `code` / `message` / `Retry-After`（如 429 / 413 / 503），
+ * 供 B2 的差异化文案映射；信封缺失或不可解析时退回原有的兜底 code 与中文文案。
+ */
+async function downloadFailure(response: Response, fallbackCode: string, fallbackMessage: string): Promise<never> {
+  const raw = await response.text().catch(() => '')
+  const payload = parseErrorBody(raw, response.headers.get('content-type') ?? '')
+  throw new ApiRequestError(
+    payload?.message ?? fallbackMessage,
+    payload?.code ?? fallbackCode,
+    response.status,
+    retryAfterFrom(response),
+  )
 }
 
 async function triggerFileDownload(response: Response, fallbackName: string): Promise<void> {
   const blob = await response.blob()
+  if (blob.size === 0) {
+    throw new ApiRequestError('文件内容为空，请稍后重试；若一直如此，请联系教师。', 'EMPTY_FILE', response.status)
+  }
   const objectUrl = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = objectUrl
@@ -57,47 +162,89 @@ export const api = {
     let page = 1
     let total = 0
     do {
-      const result = await request<{ items: typeof items; total: number }>(`/classes/${encodeURIComponent(classId)}/students?page=${page}&pageSize=100`)
+      const raw = await request<unknown>(`/classes/${encodeURIComponent(classId)}/students?page=${page}&pageSize=100`)
+      const result = readListPage<typeof items[number]>(raw, page)
+      const knownIds = new Set(items.map((student) => student.id))
+      for (const student of result.items) {
+        if (!isRecord(student) || typeof student.id !== 'string' || knownIds.has(student.id)) {
+          throw invalidResponse('学生名单分页包含重复或无效记录，请重新读取。')
+        }
+        knownIds.add(student.id)
+      }
+      const previousLength = items.length
       items.push(...result.items)
       total = result.total
+      if (items.length > total) throw invalidResponse('学生名单分页总数与记录数不一致，请重新读取。')
+      if (items.length === previousLength && items.length < total) {
+        throw invalidResponse('学生名单分页读取未能继续，请重新读取。')
+      }
       page += 1
     } while (items.length < total)
     return { items, total }
   },
   importStudents: (classId: string, students: Array<{ studentNo: string; name: string }>) => request<{ created: number; updated: number; rejected: Array<{ row: number; reason: string }> }>(`/classes/${encodeURIComponent(classId)}/students`, { method: 'PUT', body: JSON.stringify({ students }) }),
-  listGroups: (classId: string) => request<Array<{ id: string; name: string; memberCount: number }>>(`/classes/${encodeURIComponent(classId)}/groups`),
+  deleteStudent: (classId: string, studentId: string) => request<{ removed: boolean }>(`/classes/${encodeURIComponent(classId)}/students/${encodeURIComponent(studentId)}`, { method: 'DELETE' }),
+  listGroups: async (classId: string) => {
+    const result = await request<unknown>(`/classes/${encodeURIComponent(classId)}/groups`)
+    if (!Array.isArray(result)) throw invalidResponse('服务返回的分组列表格式不正确，请重新读取。')
+    return result as Array<{ id: string; name: string; memberCount: number }>
+  },
   createGroups: (classId: string, payload: { name: string; strategy?: 'manual' | 'balanced_random'; studentIds?: string[]; groupCount?: number }) => request<unknown>(`/classes/${encodeURIComponent(classId)}/groups`, { method: 'POST', body: JSON.stringify(payload) }),
-  listAssignments: () => request<{ items: AssignmentListItem[]; total: number }>('/assignments?pageSize=100'),
+  listAssignments: async () => {
+    const raw = await request<unknown>('/assignments?pageSize=100')
+    const result = readListPage<AssignmentListItem>(raw, 1)
+    return { items: result.items, total: result.total }
+  },
   createAssignment: (payload: unknown) => request<AssignmentListItem>('/assignments', { method: 'POST', body: JSON.stringify(payload) }),
   setAssignmentState: (id: string, state: 'published' | 'closed') => request<unknown>(`/assignments/${encodeURIComponent(id)}/state`, { method: 'PATCH', body: JSON.stringify({ state }) }),
-  dashboard: (id: string) => request<AssignmentDashboard>(`/assignments/${encodeURIComponent(id)}/dashboard`),
+  dashboard: async (id: string) => {
+    const result = await request<unknown>(`/assignments/${encodeURIComponent(id)}/dashboard`)
+    // C1：先逐级收窄，避免在同一表达式里对嵌套属性重复做类型收窄。
+    const record = isRecord(result) ? result : null
+    const summary = record && isRecord(record.summary) ? record.summary : null
+    if (!record
+      || !isRecord(record.assignment)
+      || !summary
+      || !Array.isArray(record.items)
+      || !['expected', 'submitted', 'missing', 'late'].every((key) => Number.isFinite(summary[key]))) {
+      throw invalidResponse('服务返回的看板数据不完整，请重新读取。')
+    }
+    return result as unknown as AssignmentDashboard
+  },
   feedback: (submissionId: string, payload: { score?: number; feedbackText: string }) => request<unknown>(`/submissions/${encodeURIComponent(submissionId)}/feedback`, { method: 'PATCH', body: JSON.stringify(payload) }),
   setCompletion: (assignmentId: string, studentId: string, completed: boolean) => request<unknown>(`/assignments/${encodeURIComponent(assignmentId)}/completions/${encodeURIComponent(studentId)}`, { method: 'PUT', body: JSON.stringify({ completed }) }),
   getPublicAssignment: (shareCode: string) => request<PublicAssignment>(`/public/assignments/${encodeURIComponent(shareCode)}`),
-  submitAssignment: (shareCode: string, payload: { studentNo: string; studentName: string; textContent: string; files: File[] }) => {
+  submitAssignment: (shareCode: string, payload: { studentNo?: string; studentName: string; textContent: string; files: File[] }) => {
     const form = new FormData()
-    form.set('studentNo', payload.studentNo)
+    if (payload.studentNo) form.set('studentNo', payload.studentNo)
     form.set('studentName', payload.studentName)
     form.set('textContent', payload.textContent)
     payload.files.forEach((file) => form.append('files', file, file.name))
     return request<{ submissionId: string; receiptCode: string; version: number; submittedAt: string; files: Array<{ id: string }> }>(`/public/assignments/${encodeURIComponent(shareCode)}/submissions`, { method: 'POST', body: form })
   },
   checkIn: (shareCode: string, payload: { studentNo?: string; studentName?: string }) => request<{ displayName: string; checkedInAt: string; alreadyCheckedIn: boolean }>(`/public/assignments/${encodeURIComponent(shareCode)}/check-ins`, { method: 'POST', body: JSON.stringify(payload) }),
-  getRelayEntries: (shareCode: string) => request<{ items: Array<{ position: number; displayName: string; content: string }>; total: number }>(`/public/assignments/${encodeURIComponent(shareCode)}/relay-entries`),
+  getRelayEntries: async (shareCode: string) => {
+    const result = await request<unknown>(`/public/assignments/${encodeURIComponent(shareCode)}/relay-entries`)
+    if (!isRecord(result) || !Array.isArray(result.items) || !Number.isSafeInteger(result.total) || (result.total as number) < 0) {
+      throw invalidResponse('服务返回的接龙名单格式不正确，请重新读取。')
+    }
+    return result as { items: Array<{ position: number; displayName: string; content: string }>; total: number }
+  },
   joinRelay: (shareCode: string, payload: { studentNo?: string; studentName?: string; content?: string }) => request<{ position: number }>(`/public/assignments/${encodeURIComponent(shareCode)}/relay-entries`, { method: 'POST', body: JSON.stringify(payload) }),
   receipt: (receiptCode: string) => request<StudentReceipt>(`/public/submissions/${encodeURIComponent(receiptCode)}`),
+  listSubmissionVersions: (submissionId: string) => request<SubmissionVersionList>(`/submissions/${encodeURIComponent(submissionId)}/versions`),
   downloadSubmissionFile: async (assignmentId: string, submissionId: string, fileId: string) => {
     const token = getAdminToken()
     const query = new URLSearchParams({ fileId })
     const response = await fetch(`${API_PREFIX}/assignments/${encodeURIComponent(assignmentId)}/submissions/${encodeURIComponent(submissionId)}/download?${query}`, {
       headers: token ? { 'X-Demo-Admin-Token': token } : {},
     })
-    if (!response.ok) throw new ApiRequestError('附件暂时无法下载。', 'DOWNLOAD_FAILED', response.status)
+    if (!response.ok) await downloadFailure(response, 'DOWNLOAD_FAILED', '附件暂时无法下载，请稍后重试；若持续失败，请联系教师。')
     await triggerFileDownload(response, '作业附件')
   },
   download: async (fileId: string, receiptCode: string) => {
     const response = await fetch(`${API_PREFIX}/public/files/${encodeURIComponent(fileId)}/download?receiptCode=${encodeURIComponent(receiptCode)}`)
-    if (!response.ok) throw new ApiRequestError('文件暂时无法下载。', 'DOWNLOAD_FAILED', response.status)
+    if (!response.ok) await downloadFailure(response, 'DOWNLOAD_FAILED', '文件暂时无法下载，请稍后重试；若持续失败，请联系教师。')
     await triggerFileDownload(response, '作业附件')
   },
   exportFile: async (assignmentId: string, format: 'csv' | 'zip' | 'docx', submissionId?: string) => {
@@ -105,7 +252,7 @@ export const api = {
     const query = new URLSearchParams({ format })
     if (submissionId) query.set('submissionId', submissionId)
     const response = await fetch(`${API_PREFIX}/assignments/${encodeURIComponent(assignmentId)}/exports?${query}`, { headers: token ? { 'X-Demo-Admin-Token': token } : {} })
-    if (!response.ok) throw new ApiRequestError('导出失败，请稍后重试。', 'EXPORT_FAILED', response.status)
+    if (!response.ok) await downloadFailure(response, 'EXPORT_FAILED', '导出暂时失败，请稍后重试；若持续失败，请联系教师。')
     await triggerFileDownload(response, `作业.${format}`)
   },
 }
@@ -153,6 +300,26 @@ export interface PublicAssignment {
   state: string
 }
 
+export interface SubmissionVersionFile {
+  id: string
+  originalName: string
+  contentType: string
+  sizeBytes: number
+}
+
+export interface SubmissionVersion {
+  version: number
+  submittedAt: string
+  textContent: string
+  files: SubmissionVersionFile[]
+}
+
+export interface SubmissionVersionList {
+  submissionId: string
+  currentVersion: number
+  items: SubmissionVersion[]
+}
+
 export interface StudentReceipt {
   assignment: { id: string; title: string; type: AssignmentListItem['type']; dueAt: string | null }
   submittedAt: string
@@ -160,4 +327,5 @@ export interface StudentReceipt {
   textContent: string
   files: Array<{ id: string; originalName: string; contentType: string; sizeBytes: number }>
   feedback: { score: number | null; feedbackText: string; reviewedAt: string } | null
+  versions: SubmissionVersion[]
 }

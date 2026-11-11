@@ -141,6 +141,14 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 - **规则**：`(classId, studentNo)` 唯一；重复学号更新姓名，不新增记录；同一批次内学号重复、学号或姓名为空的行会被拒绝并给出行号；全部非法时返回 `400`。
 - **错误**：`404` 班级不存在；`400` 无有效行；`422` DTO 校验失败。
 
+#### 3.4.1 `DELETE /classes/{classId}/students/{studentId}` — 删除单个学生
+
+- **鉴权**：管理令牌
+- **响应 200**：`{ removed: true }`
+- **错误**：`404` 班级或学生不存在；`409` 该学生已有提交记录（`Submission` 对学生为 `Restrict` 删除策略，
+  为保证作业统计与回执完整，已有提交记录的学生不可删除，信封 `message` 为中文提示）。
+- **行为**：删除学生同时级联清理其分组归属（`GroupMembership` 级联）；提交记录、回执等历史数据不受影响。
+
 ### 3.5 `GET /classes/{classId}/groups` — 查询分组
 
 - **鉴权**：管理令牌
@@ -321,7 +329,7 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 
   | 字段 | 说明 |
   | --- | --- |
-  | `studentNo` | 学号（前端表单必填）；API 允许只凭唯一姓名匹配 |
+  | `studentNo` | 学号（可选；学生端表单只填姓名，由服务端按唯一姓名自动匹配，重名时拒绝） |
   | `studentName` | 姓名（前端表单必填）；与学号同时提供时必须一致 |
   | `textContent` | 文本答案，按 `submissionMode` 要求 |
   | `files` | 0–N 个附件（字段名重复多次），受数量、大小、类型白名单与内容签名校验 |

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, ValidationPipe, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, ValidationPipe, UseGuards } from '@nestjs/common'
 import { AdminGuard } from '../common/admin.guard.js'
 import { BootstrapDto, CreateGroupDto, ImportStudentsDto } from './classes.dto.js'
 import { ClassesService } from './classes.service.js'
@@ -32,6 +32,11 @@ export class ClassesController {
   @Put('classes/:classId/students')
   importStudents(@Param('classId') classId: string, @Body() input: ImportStudentsDto) {
     return this.classes.importStudents(classId, input)
+  }
+
+  @Delete('classes/:classId/students/:studentId')
+  deleteStudent(@Param('classId') classId: string, @Param('studentId') studentId: string) {
+    return this.classes.deleteStudent(classId, studentId)
   }
 
   @Get('classes/:classId/groups')

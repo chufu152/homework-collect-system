@@ -17,7 +17,7 @@ const routerStubs = { RouterLink: { template: '<a><slot /></a>' } }
 
 describe('assignment creation form', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     api.currentClass.mockResolvedValue({ classId: 'class-1', name: '三年级一班', studentCount: 24 })
     api.listGroups.mockResolvedValue([])
     api.listStudents.mockResolvedValue({ items: [], total: 24 })
@@ -49,5 +49,49 @@ describe('assignment creation form', () => {
     }))
     expect(wrapper.text()).toContain('作业已发布')
     expect(wrapper.get('[aria-label="学生分享链接"]').element.getAttribute('value')).toBe('http://127.0.0.1:5173/a/share-code')
+  })
+
+  it('explains an uninitialized class after loading finishes', async () => {
+    api.currentClass.mockResolvedValue(null)
+    const wrapper = mount(AssignmentCreateView, { global: { stubs: routerStubs } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('先建立班级名单')
+    expect(wrapper.text()).not.toContain('正在读取班级名单')
+    expect(wrapper.find('form').exists()).toBe(false)
+  })
+
+  it('does not mislabel an API failure as an uninitialized class and offers retry', async () => {
+    api.currentClass.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(null)
+    const wrapper = mount(AssignmentCreateView, { global: { stubs: routerStubs } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('网络连接失败')
+    expect(wrapper.text()).toContain('暂时无法读取班级信息')
+    expect(wrapper.text()).not.toContain('先建立班级名单')
+
+    const retry = wrapper.findAll('button').find((button) => button.text() === '重新读取')
+    expect(retry).toBeDefined()
+    await retry!.trigger('click')
+    await flushPromises()
+
+    expect(api.currentClass).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('先建立班级名单')
+  })
+
+  it('explains and rejects an empty target roster without calling the API', async () => {
+    api.currentClass.mockResolvedValue({ classId: 'class-1', name: '三年级一班', studentCount: 0 })
+    api.listGroups.mockResolvedValue([])
+    api.listStudents.mockResolvedValue({ items: [], total: 0 })
+    const wrapper = mount(AssignmentCreateView, { global: { stubs: routerStubs } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前没有可发布的对象')
+    await wrapper.get('input[placeholder="例如：周五数学练习"]').setValue('空名单作业')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前目标名单没有学生')
+    expect(api.createAssignment).not.toHaveBeenCalled()
   })
 })

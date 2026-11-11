@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { api, type StudentReceipt } from '../api/client'
+import { describeError } from '../api/error-messages'
 
 const props = defineProps<{ receiptCode: string }>()
 const receipt = ref<StudentReceipt | null>(null)
 const loading = ref(true)
 const errorMessage = ref('')
-const downloadingId = ref<string | null>(null)
+// C1：按文件粒度记录下载中状态，多个附件各自独立，不互相覆盖。
+const downloading = reactive<Record<string, boolean>>({})
+const history = computed(() => receipt.value?.versions ?? [])
 
 async function load(): Promise<void> {
   loading.value = true
@@ -14,21 +17,22 @@ async function load(): Promise<void> {
   try {
     receipt.value = await api.receipt(props.receiptCode)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '回执暂时无法读取。'
+    errorMessage.value = describeError(error, '回执暂时无法读取。')
   } finally {
     loading.value = false
   }
 }
 
 async function download(fileId: string): Promise<void> {
-  downloadingId.value = fileId
+  if (downloading[fileId]) return
+  downloading[fileId] = true
   errorMessage.value = ''
   try {
     await api.download(fileId, props.receiptCode)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '文件暂时无法下载。'
+    errorMessage.value = describeError(error, '文件暂时无法下载，请稍后重试；若持续失败，请联系教师。')
   } finally {
-    downloadingId.value = null
+    delete downloading[fileId]
   }
 }
 
@@ -45,8 +49,23 @@ onMounted(load)
       <div v-if="receipt.textContent" class="receipt-content">{{ receipt.textContent }}</div>
       <div v-if="receipt.files.length">
         <p class="eyebrow">已提交附件</p>
-        <ul class="download-list"><li v-for="file in receipt.files" :key="file.id"><button class="button quiet" type="button" :disabled="downloadingId === file.id" @click="download(file.id)">{{ downloadingId === file.id ? '正在下载…' : `下载 ${file.originalName}` }}</button><span class="student-number">{{ (file.sizeBytes / 1024 / 1024).toFixed(1) }} MB</span></li></ul>
+        <ul class="download-list"><li v-for="file in receipt.files" :key="file.id"><button class="button quiet" type="button" :disabled="!!downloading[file.id]" @click="download(file.id)">{{ !!downloading[file.id] ? '正在下载…' : `下载 ${file.originalName}` }}</button><span class="student-number">{{ (file.sizeBytes / 1024 / 1024).toFixed(1) }} MB</span></li></ul>
       </div>
+      <p v-else class="field-note">当前提交版本没有附件。</p>
+      <details v-if="history.length > 1" class="submission-detail version-history">
+        <summary>查看历次修改（共 {{ history.length }} 版）</summary>
+        <div v-for="version in history" :key="version.version" class="version-item">
+          <p class="version-label">第 {{ version.version }} 版<span v-if="version.version === receipt.version"> · 当前版本</span> · {{ new Date(version.submittedAt).toLocaleString('zh-CN') }}</p>
+          <pre v-if="version.textContent" class="submission-text">{{ version.textContent }}</pre>
+          <p v-else class="version-note">此版本没有文本内容。</p>
+          <ul v-if="version.files.length" class="submission-files">
+            <li v-for="file in version.files" :key="file.id">
+              <button class="button quiet" type="button" :disabled="!!downloading[file.id]" @click="download(file.id)">{{ !!downloading[file.id] ? '正在下载…' : file.originalName }}</button>
+              <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB</small>
+            </li>
+          </ul>
+        </div>
+      </details>
       <div class="receipt-feedback"><strong>教师反馈</strong><p v-if="receipt.feedback">{{ receipt.feedback.score == null ? '' : `分数：${receipt.feedback.score}　` }}{{ receipt.feedback.feedbackText || '老师已查看。' }}</p><p v-else>老师尚未添加反馈，稍后可以使用此回执链接再查看。</p></div>
       <p v-if="errorMessage" class="field-message error-text" role="alert">{{ errorMessage }}</p>
       <div style="margin-top:18px"><span class="receipt-copy">回执码</span><br /><code class="receipt-code">{{ receiptCode }}</code></div>

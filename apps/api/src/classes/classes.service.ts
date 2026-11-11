@@ -138,6 +138,18 @@ export class ClassesService {
     return { created, updated, rejected }
   }
 
+  async deleteStudent(classId: string, studentId: string) {
+    await this.requireClass(classId)
+    const student = await this.prisma.student.findFirst({ where: { id: studentId, classId }, select: { id: true } })
+    if (!student) throw new NotFoundException('Student not found in this class.')
+    const submissionCount = await this.prisma.submission.count({ where: { studentId } })
+    if (submissionCount > 0) {
+      throw new ConflictException('该学生已有提交记录，为保证作业统计完整，无法删除。')
+    }
+    await this.prisma.student.delete({ where: { id: studentId } })
+    return { removed: true }
+  }
+
   async listGroups(classId: string) {
     await this.requireClass(classId)
     const groups = await this.prisma.studentGroup.findMany({
