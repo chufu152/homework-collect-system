@@ -55,4 +55,9 @@ export class ClassesController {
   createGroups(@Param('classId') classId: string, @Body() input: CreateGroupDto) {
     return this.classes.createGroups(classId, input)
   }
+
+  @Delete('classes/:classId')
+  deleteClass(@Param('classId') classId: string) {
+    return this.classes.deleteClass(classId)
+  }
 }

@@ -202,6 +202,32 @@ function removeClass(classId: string): void {
   void loadClass()
 }
 
+/** 从云端彻底删除班级：名单、分组、作业、提交记录全部清除，二次确认后执行。 */
+function deleteClassFromCloud(entry: ImportedClass): void {
+  if (busy.value) return
+  requestConfirm(
+    '确认删除班级',
+    `将永久删除云端班级「${entry.name}」及其全部学生名单、分组、作业和提交记录，此操作不可恢复。确定继续吗？`,
+    '永久删除',
+    async () => {
+      deleting.value = true
+      try {
+        await api.deleteClass(entry.classId)
+        removeImportedClass(entry.classId)
+        importedClasses.value = listImportedClasses()
+        confirmState.value = null
+        showToast(`班级「${entry.name}」已从云端删除。`, 'danger')
+        await loadClass()
+      } catch (error) {
+        confirmState.value = null
+        errorMessage.value = describeError(error, '班级删除失败。')
+      } finally {
+        deleting.value = false
+      }
+    },
+  )
+}
+
 async function loadClass(): Promise<void> {
   // C1：允许切换班级触发的读取覆盖旧请求；较早的响应不能覆盖较新的班级状态。
   const sequence = ++classLoadSequence
@@ -392,7 +418,10 @@ onBeforeUnmount(() => {
             <button class="class-switch" type="button" :title="`切换到 ${entry.name}`" @click="switchClass(entry.classId)">
               <span class="class-dot" aria-hidden="true"></span>{{ entry.name }}
             </button>
-            <button class="button quiet class-remove" type="button" @click="removeClass(entry.classId)">移除</button>
+            <span class="class-row-actions">
+              <button class="button quiet class-remove" type="button" @click="removeClass(entry.classId)">移除</button>
+              <button class="class-delete" type="button" :title="`从云端永久删除 ${entry.name}`" @click="deleteClassFromCloud(entry)">删除班级</button>
+            </span>
           </li>
         </ul>
 

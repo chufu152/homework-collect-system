@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { randomInt } from 'node:crypto'
 import { PrismaService } from '../prisma/prisma.service.js'
+import { StorageService } from '../storage/storage.service.js'
 import { hashTeacherKey, isValidTeacherKeyFormat, keyMatchesHash } from '../common/admin-token.js'
 import { partitionIntoGroups } from '../assignments/workflows.js'
 import type { CreateGroupDto, ImportClassDto, ImportStudentsDto, VerifyClassKeyDto } from './classes.dto.js'
@@ -25,7 +26,7 @@ function pageValue(value: string | undefined, fallback: number, maximum: number)
 
 @Injectable()
 export class ClassesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
 
   /**
    * 导入班级：支持「建立新班级」与「把已有班级导入当前浏览器」两种语义。
@@ -235,6 +236,29 @@ export class ClassesService {
       }
       throw error
     }
+  }
+
+  /**
+   * 从云端彻底删除班级：名单、分组、作业、提交记录及其附件一并清除。
+   * Submission.student 是 onDelete: Restrict，必须先删作业（级联清掉提交）再删学生；
+   * 文件物理删除放在事务提交之后尽力执行，失败不阻塞删班结果。
+   */
+  async deleteClass(classId: string) {
+    await this.requireClass(classId)
+    const files = await this.prisma.submissionFile.findMany({
+      where: { version: { submission: { assignment: { classId } } } },
+      select: { storageKey: true },
+    })
+    await this.prisma.$transaction([
+      this.prisma.assignment.deleteMany({ where: { classId } }),
+      this.prisma.studentGroup.deleteMany({ where: { classId } }),
+      this.prisma.student.deleteMany({ where: { classId } }),
+      this.prisma.demoState.deleteMany({ where: { classId } }),
+      this.prisma.classroom.delete({ where: { id: classId } }),
+    ])
+    const results = await Promise.allSettled(files.map((file) => this.storage.remove(file.storageKey)))
+    const failedFiles = results.filter((result) => result.status === 'rejected').length
+    return { removed: true, removedFiles: files.length - failedFiles }
   }
 
   private async requireClass(classId: string): Promise<void> {

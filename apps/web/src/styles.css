@@ -270,7 +270,10 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
 .class-switch { display: inline-flex; align-items: center; gap: 9px; padding: 4px 2px; border: 0; background: none; cursor: pointer; color: var(--ink); font-size: 14px; font-weight: 600; }
 .class-dot { width: 9px; height: 9px; border-radius: 50%; background: #c9d6d0; }
 .imported-class-list li.is-active .class-dot { background: var(--sea); }
-.class-remove { margin-left: auto; min-height: 32px; padding: 4px 10px; font-size: 12px; }
+.class-remove { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+.class-row-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.class-delete { min-height: 32px; padding: 4px 10px; font-size: 12px; border: 1px solid #f3c2c2; border-radius: 9px; background: #fff; color: #c0392b; cursor: pointer; }
+.class-delete:hover { background: #c0392b; border-color: #c0392b; color: #fff; }
 
 /* ---- 班级管理：成员列表 ---- */
 .member-panel { display: flex; flex-direction: column; gap: 16px; }
