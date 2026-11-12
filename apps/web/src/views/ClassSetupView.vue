@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api, addImportedClass, getActiveClass, listImportedClasses, removeImportedClass, setActiveClassId, type ImportedClass } from '../api/client'
 import { describeError } from '../api/error-messages'
+import { copyToClipboard } from '../utils/clipboard'
 
 const className = ref('')
 const classKey = ref('')
@@ -110,27 +111,58 @@ async function runConfirmed(): Promise<void> {
 }
 
 /**
+ * 自动生成班级密钥：crypto 随机 20 字符，剔除易混淆字符（0/O、1/l/I），
+ * 前缀 hcs- 便于识别来源；符合后端 8–128 位密钥要求。
+ */
+function generateClassKey(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+  const bytes = new Uint8Array(20)
+  crypto.getRandomValues(bytes)
+  let key = 'hcs-'
+  for (const byte of bytes) key += alphabet[byte % alphabet.length]
+  return key
+}
+
+/**
  * 导入班级：填写班级名称 + 班级密钥 → 建立新班级或幂等导入已有班级；
- * 只填密钥则按密钥找回已导入过的班级。成功后加入本浏览器保存的班级列表并切换为活动班级。
+ * 只填密钥则按密钥找回已导入过的班级；新建班级时密钥留空会自动生成并复制到剪贴板。
+ * 成功后加入本浏览器保存的班级列表并切换为活动班级。
  */
 async function importClassNow(): Promise<void> {
   if (importing.value || savingGroup.value || deleting.value) return
+  const name = className.value.trim()
   const key = classKey.value.trim()
-  if (!key) {
-    errorMessage.value = '请填写班级密钥（至少 8 位）。'
+  if (!name && !key) {
+    errorMessage.value = '请填写班级名称；新建班级时密钥可留空（自动生成）。'
     return
   }
   savingKey.value = true
   errorMessage.value = ''
+  // 新建班级且未填密钥 → 自动生成，导入成功后自动复制到剪贴板
+  const finalKey = key || (name ? generateClassKey() : '')
   try {
-    const name = className.value.trim()
     const info = name
-      ? await api.importClass(name, key)
-      : await api.verifyClassKey(key)
-    addImportedClass({ classId: info.classId, name: info.name, teacherKey: key, studentCount: info.studentCount })
+      ? await api.importClass(name, finalKey)
+      : await api.verifyClassKey(finalKey)
+    addImportedClass({ classId: info.classId, name: info.name, teacherKey: finalKey, studentCount: info.studentCount })
     importedClasses.value = listImportedClasses()
     classKey.value = ''
-    showToast(name ? `班级「${info.name}」已导入。` : `班级「${info.name}」导入成功。`, 'success')
+    if (key) {
+      showToast(name ? `班级「${info.name}」已导入。` : `班级「${info.name}」导入成功。`, 'success')
+    } else {
+      let copied = true
+      try {
+        await copyToClipboard(finalKey)
+      } catch {
+        copied = false
+      }
+      showToast(
+        copied
+          ? `班级「${info.name}」已创建，密钥已自动复制到剪贴板。`
+          : `班级「${info.name}」已创建，复制失败，请手动保存密钥：${finalKey}`,
+        copied ? 'success' : 'danger',
+      )
+    }
     await loadClass()
   } catch (error) {
     errorMessage.value = describeError(error, '班级导入失败。')
@@ -337,7 +369,7 @@ onBeforeUnmount(() => {
         <div>
           <p class="eyebrow">教师管理</p>
           <h2 style="margin: 5px 0 8px; font-size: 18px">导入班级</h2>
-          <p class="muted-copy">填写班级名称和班级密钥：新名称会建立新班级，已有名称会校验密钥后导入。支持多个班级，导入过的班级保存在本浏览器，可随时切换。</p>
+          <p class="muted-copy">填写班级名称和班级密钥：新名称会建立新班级，已有名称会校验密钥后导入。新建班级时密钥可留空，系统会自动生成并复制到剪贴板；支持多个班级，导入过的班级保存在本浏览器，可随时切换。</p>
         </div>
 
         <ul v-if="importedClasses.length" class="imported-class-list" aria-label="已导入的班级">
@@ -351,7 +383,7 @@ onBeforeUnmount(() => {
 
         <form class="teacher-key-form" @submit.prevent="importClassNow">
           <input v-model="className" aria-label="班级名称" placeholder="班级名称（新名称将建立新班级）" maxlength="80" />
-          <input v-model="classKey" type="password" autocomplete="current-password" aria-label="班级密钥" placeholder="粘贴班级密钥（至少 8 位）" required />
+          <input v-model="classKey" type="password" autocomplete="current-password" aria-label="班级密钥" placeholder="班级密钥（新建班级可留空，自动生成）" />
           <button class="button secondary" type="submit" :disabled="savingKey || busy">导入班级</button>
         </form>
         <p v-if="errorMessage" class="field-message error-text" role="alert">{{ errorMessage }}</p>
@@ -360,7 +392,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-if="!loading && !loadError && !classInfo" class="surface panel form-grid" style="margin-top: 16px">
-        <div><p class="eyebrow">从这里开始</p><h2 style="margin: 5px 0 8px; font-size: 18px">还没有导入任何班级</h2><p class="muted-copy">在上方填写班级名称与班级密钥完成导入；只有首次建班需要自定密钥，之后同一密钥可在任何浏览器重新导入该班级。</p></div>
+        <div><p class="eyebrow">从这里开始</p><h2 style="margin: 5px 0 8px; font-size: 18px">还没有导入任何班级</h2><p class="muted-copy">在上方填写班级名称即可完成导入，密钥留空时系统会自动生成并复制到剪贴板；之后同一密钥可在任何浏览器重新导入该班级，请妥善保存。</p></div>
       </section>
 
       <!-- 班级成员列表（主体） -->
