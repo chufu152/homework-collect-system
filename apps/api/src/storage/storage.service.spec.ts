@@ -36,4 +36,9 @@ describe('local attachment streaming', () => {
     await expect(service.openReadStream('../outside.pdf')).rejects.toThrow('Invalid internal storage key.')
     await expect(service.openReadStream('assignment/student/missing.pdf')).rejects.toThrow()
   })
+
+  it('does not issue presigned direct links for the local driver', async () => {
+    const service = await localService()
+    expect(service.presignedDownloadUrl('assignment/student/answer.pdf', 'answer.pdf')).toBeNull()
+  })
 })

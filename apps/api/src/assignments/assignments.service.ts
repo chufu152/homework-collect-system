@@ -9,6 +9,7 @@ import { ExportsService } from '../exports/exports.service.js'
 import { calculateDashboard, resolveTargetStudents, validateSubmissionAccess } from './workflows.js'
 import type { AssignmentStateDto, CreateAssignmentDto, FeedbackDto, RelayEntryDto, StudentLookupDto } from './assignments.dto.js'
 import { StorageService } from '../storage/storage.service.js'
+import type { DownloadResult } from '../common/file-response.js'
 import { safeDownloadName, validateUploadContent } from '../storage/storage-policy.js'
 
 const FILE_TYPES = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt', 'zip'] as const
@@ -507,7 +508,7 @@ export class AssignmentsService {
     }
   }
 
-  async getDownload(fileId: string, receiptCode?: string, adminToken?: string) {
+  async getDownload(fileId: string, receiptCode?: string, adminToken?: string): Promise<DownloadResult> {
     const file = await this.prisma.submissionFile.findUnique({
       where: { id: fileId },
       include: { version: { include: { submission: { select: { receiptCode: true, assignmentId: true } } } } },
@@ -517,6 +518,8 @@ export class AssignmentsService {
     if (!hasAdminAccess && !compareSecrets(receiptCode, file.version.submission.receiptCode)) {
       throw new NotFoundException('File not found.')
     }
+    const redirectUrl = this.storage.presignedDownloadUrl(file.storageKey, file.originalName)
+    if (redirectUrl) return { redirectUrl }
     return {
       content: await this.storage.openReadStream(file.storageKey),
       contentType: file.contentType,
@@ -539,12 +542,14 @@ export class AssignmentsService {
     return isValidAdminToken(adminToken)
   }
 
-  async getSubmissionDownload(assignmentId: string, submissionId: string, fileId: string) {
+  async getSubmissionDownload(assignmentId: string, submissionId: string, fileId: string): Promise<DownloadResult> {
     const file = await this.prisma.submissionFile.findFirst({
       where: { id: fileId, version: { submission: { id: submissionId, assignmentId } } },
       select: { storageKey: true, contentType: true, originalName: true, sizeBytes: true },
     })
     if (!file) throw new NotFoundException('File not found.')
+    const redirectUrl = this.storage.presignedDownloadUrl(file.storageKey, file.originalName)
+    if (redirectUrl) return { redirectUrl }
     return {
       content: await this.storage.openReadStream(file.storageKey),
       contentType: file.contentType,

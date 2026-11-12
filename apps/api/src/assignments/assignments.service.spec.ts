@@ -25,7 +25,7 @@ function fileService() {
     // 历史班级（teacherKeyHash 为空）回退到部署级 DEMO_ADMIN_TOKEN。
     assignment: { findUnique: vi.fn().mockResolvedValue({ classroom: { teacherKeyHash: '' } }) },
   }
-  const storage = { openReadStream: vi.fn().mockResolvedValue('a-stream') }
+  const storage = { openReadStream: vi.fn().mockResolvedValue('a-stream'), presignedDownloadUrl: vi.fn().mockReturnValue(null) }
   return { service: new AssignmentsService(prisma as never, storage as never, {} as never), storage }
 }
 
@@ -45,8 +45,8 @@ describe('unguarded file download credentials', () => {
   it('accepts a configured teacher key or the matching receipt code, and streams the object', async () => {
     process.env.DEMO_ADMIN_TOKEN = 'a-private-class-key-with-32-byte-minimum'
     const { service, storage } = fileService()
-    expect((await service.getDownload('file-1', undefined, process.env.DEMO_ADMIN_TOKEN)).content).toBe('a-stream')
-    expect((await service.getDownload('file-1', 'real-receipt-code')).content).toBe('a-stream')
+    expect((await service.getDownload('file-1', undefined, process.env.DEMO_ADMIN_TOKEN) as { content: unknown }).content).toBe('a-stream')
+    expect((await service.getDownload('file-1', 'real-receipt-code') as { content: unknown }).content).toBe('a-stream')
     expect(storage.openReadStream).toHaveBeenCalledTimes(2)
     await expect(service.getDownload('file-1', 'wrong-receipt')).rejects.toThrow('File not found.')
   })

@@ -208,6 +208,31 @@ async function triggerFileDownload(response: Response, fallbackName: string): Pr
   URL.revokeObjectURL(objectUrl)
 }
 
+/**
+ * 下载响应二选一：S3/R2 驱动返回 JSON 信封 `{ redirectUrl }`（预签名直链，
+ * 直接跳转对象存储下载，不经服务器中转）；local 驱动仍是二进制流，走原逻辑。
+ */
+async function consumeDownload(response: Response, fallbackName: string): Promise<void> {
+  if (!response.ok) await downloadFailure(response, 'DOWNLOAD_FAILED', '文件暂时无法下载，请稍后重试；若持续失败，请联系教师。')
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    const raw = await response.text()
+    const payload = parseErrorBody(raw, contentType)
+    const redirectUrl = payload && typeof (payload as { redirectUrl?: unknown }).redirectUrl === 'string'
+      ? (payload as { redirectUrl: string }).redirectUrl
+      : null
+    if (!redirectUrl) throw new ApiRequestError('服务没有返回可用的下载地址，请稍后重试。', 'EMPTY_FILE', response.status)
+    const anchor = document.createElement('a')
+    anchor.href = redirectUrl
+    anchor.rel = 'noopener'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    return
+  }
+  await triggerFileDownload(response, fallbackName)
+}
+
 export const api = {
   request,
   /** 导入班级：新班级名 + 新密钥 = 建班；已有班级名 + 匹配密钥 = 幂等导入。 */
@@ -298,13 +323,11 @@ export const api = {
     const response = await fetch(`${API_PREFIX}/assignments/${encodeURIComponent(assignmentId)}/submissions/${encodeURIComponent(submissionId)}/download?${query}`, {
       headers: token ? { 'X-Demo-Admin-Token': token } : {},
     })
-    if (!response.ok) await downloadFailure(response, 'DOWNLOAD_FAILED', '附件暂时无法下载，请稍后重试；若持续失败，请联系教师。')
-    await triggerFileDownload(response, '作业附件')
+    await consumeDownload(response, '作业附件')
   },
   download: async (fileId: string, receiptCode: string) => {
     const response = await fetch(`${API_PREFIX}/public/files/${encodeURIComponent(fileId)}/download?receiptCode=${encodeURIComponent(receiptCode)}`)
-    if (!response.ok) await downloadFailure(response, 'DOWNLOAD_FAILED', '文件暂时无法下载，请稍后重试；若持续失败，请联系教师。')
-    await triggerFileDownload(response, '作业附件')
+    await consumeDownload(response, '作业附件')
   },
   exportFile: async (assignmentId: string, format: 'csv' | 'zip' | 'docx', submissionId?: string) => {
     const token = getAdminToken()

@@ -2,7 +2,7 @@ import { Body, Controller, Get, Headers, Param, Patch, Post, Put, Query, Res, Up
 import { AnyFilesInterceptor } from '@nestjs/platform-express/multer/interceptors/any-files.interceptor'
 import type { Express, Response } from 'express'
 import { AdminGuard } from '../common/admin.guard.js'
-import { sendDownload } from '../common/file-response.js'
+import { isRedirectDownload, sendDownload, sendRedirectPayload } from '../common/file-response.js'
 import { AssignmentsService } from './assignments.service.js'
 import { AssignmentStateDto, CompletionDto, CreateAssignmentDto, FeedbackDto, RelayEntryDto, StudentLookupDto, SubmitDto } from './assignments.dto.js'
 
@@ -44,7 +44,12 @@ export class AssignmentsController {
     @Query('fileId') fileId: string,
     @Res() response: Response,
   ): Promise<void> {
-    sendDownload(response, await this.assignments.getSubmissionDownload(assignmentId, submissionId, fileId))
+    const file = await this.assignments.getSubmissionDownload(assignmentId, submissionId, fileId)
+    if (isRedirectDownload(file)) {
+      sendRedirectPayload(response, file.redirectUrl)
+      return
+    }
+    sendDownload(response, file)
   }
 
   @Get('submissions/:submissionId/versions')
@@ -148,7 +153,12 @@ export class PublicFilesController {
     @Query('receiptCode') receiptCode: string,
     @Res() response: Response,
   ): Promise<void> {
-    sendDownload(response, await this.assignments.getDownload(fileId, receiptCode))
+    const file = await this.assignments.getDownload(fileId, receiptCode)
+    if (isRedirectDownload(file)) {
+      sendRedirectPayload(response, file.redirectUrl)
+      return
+    }
+    sendDownload(response, file)
   }
 }
 
@@ -163,7 +173,12 @@ export class FilesController {
     @Headers('x-demo-admin-token') adminToken: string | undefined,
     @Res() response: Response,
   ): Promise<void> {
-    sendDownload(response, await this.assignments.getDownload(fileId, receiptCode, adminToken))
+    const file = await this.assignments.getDownload(fileId, receiptCode, adminToken)
+    if (isRedirectDownload(file)) {
+      sendRedirectPayload(response, file.redirectUrl)
+      return
+    }
+    sendDownload(response, file)
   }
 }
 

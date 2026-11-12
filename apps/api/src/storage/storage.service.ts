@@ -7,6 +7,9 @@ import { Readable } from 'node:stream'
 import path from 'node:path'
 import type { Express } from 'express'
 import { safeDownloadName } from './storage-policy.js'
+import { presignS3GetUrl } from './sigv4.js'
+
+const PRESIGN_EXPIRES_SECONDS = 600
 
 @Injectable()
 export class StorageService {
@@ -92,6 +95,29 @@ export class StorageService {
       return
     }
     await rm(this.resolveLocalPath(key), { force: true })
+  }
+
+  /**
+   * S3/R2 驱动：生成 10 分钟有效的预签名下载直链，文件流量不经过本服务；
+   * local 驱动返回 null，调用方降级为服务端流式转发。
+   */
+  presignedDownloadUrl(key: string, downloadName: string): string | null {
+    if (this.driver !== 's3' || !this.s3 || !this.bucket) return null
+    const credentials = this.s3.config.credentials as { accessKeyId?: string; secretAccessKey?: string }
+    if (!credentials?.accessKeyId || !credentials?.secretAccessKey) return null
+    const endpoint = process.env.S3_ENDPOINT
+    const host = endpoint ? new URL(endpoint).host : 's3.amazonaws.com'
+    const region = typeof this.s3.config.region === 'string' ? this.s3.config.region : 'auto'
+    return presignS3GetUrl({
+      host,
+      bucket: this.bucket,
+      key,
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+      region,
+      expiresSeconds: PRESIGN_EXPIRES_SECONDS,
+      responseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(safeDownloadName(downloadName))}`,
+    })
   }
 
   private resolveLocalPath(key: string): string {
