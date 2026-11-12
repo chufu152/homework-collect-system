@@ -1,22 +1,29 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, ValidationPipe, UseGuards } from '@nestjs/common'
 import { AdminGuard } from '../common/admin.guard.js'
-import { BootstrapDto, CreateGroupDto, ImportStudentsDto } from './classes.dto.js'
+import { CreateGroupDto, ImportClassDto, ImportStudentsDto, VerifyClassKeyDto } from './classes.dto.js'
 import { ClassesService } from './classes.service.js'
 
+/** 公开端点：班级导入 / 密钥校验本身就是鉴权手段，不经过 AdminGuard。 */
+@Controller('classes')
+export class ClassImportController {
+  constructor(private readonly classes: ClassesService) {}
+
+  @Post('import')
+  import(@Body(new ValidationPipe({ whitelist: true, transform: true })) input: ImportClassDto) {
+    return this.classes.importClass(input)
+  }
+
+  @Post('verify')
+  verify(@Body(new ValidationPipe({ whitelist: true, transform: true })) input: VerifyClassKeyDto) {
+    return this.classes.verifyClassKey(input)
+  }
+}
+
+/** 教师管理端点：AdminGuard 按路由解析班级并校验该班级的独立密钥。 */
 @Controller()
 @UseGuards(AdminGuard)
 export class ClassesController {
   constructor(private readonly classes: ClassesService) {}
-
-  @Post('demo/bootstrap')
-  bootstrap(@Body(new ValidationPipe({ whitelist: true, transform: true })) input: BootstrapDto) {
-    return this.classes.bootstrap(input)
-  }
-
-  @Get('classes/current')
-  current() {
-    return this.classes.current()
-  }
 
   @Get('classes/:classId/students')
   listStudents(

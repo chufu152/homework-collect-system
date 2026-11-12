@@ -17,15 +17,70 @@ export class ApiRequestError extends Error {
 }
 
 const API_PREFIX = `${import.meta.env.VITE_API_BASE ?? ''}/api/v1`
-const ADMIN_TOKEN_KEY = 'hcs.teacher-key'
 
-export function setAdminToken(token: string): void {
-  if (token) sessionStorage.setItem(ADMIN_TOKEN_KEY, token)
-  else sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+/**
+ * 多班级管理：每个班级持有独立密钥，导入过的班级持久保存在 localStorage，
+ * 会话/页面之间可随时切换；请求头自动携带「当前活动班级」的密钥。
+ */
+export interface ImportedClass {
+  classId: string
+  name: string
+  teacherKey: string
+  studentCount?: number
 }
 
+const IMPORTED_CLASSES_KEY = 'hcs.imported-classes'
+const ACTIVE_CLASS_KEY = 'hcs.active-class'
+
+export function listImportedClasses(): ImportedClass[] {
+  try {
+    const raw = localStorage.getItem(IMPORTED_CLASSES_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((entry): entry is ImportedClass => {
+      const record = entry as Record<string, unknown>
+      return typeof record?.classId === 'string' && typeof record?.name === 'string' && typeof record?.teacherKey === 'string'
+    })
+  } catch {
+    return []
+  }
+}
+
+function saveImportedClasses(entries: ImportedClass[]): void {
+  localStorage.setItem(IMPORTED_CLASSES_KEY, JSON.stringify(entries))
+}
+
+export function addImportedClass(entry: ImportedClass): void {
+  const entries = listImportedClasses().filter((item) => item.classId !== entry.classId)
+  entries.push(entry)
+  saveImportedClasses(entries)
+  setActiveClassId(entry.classId)
+}
+
+export function removeImportedClass(classId: string): void {
+  saveImportedClasses(listImportedClasses().filter((item) => item.classId !== classId))
+  if (getActiveClassId() === classId) {
+    const remaining = listImportedClasses()
+    localStorage.setItem(ACTIVE_CLASS_KEY, remaining[0]?.classId ?? '')
+  }
+}
+
+export function getActiveClassId(): string {
+  return localStorage.getItem(ACTIVE_CLASS_KEY) ?? ''
+}
+
+export function setActiveClassId(classId: string): void {
+  if (classId) localStorage.setItem(ACTIVE_CLASS_KEY, classId)
+  else localStorage.removeItem(ACTIVE_CLASS_KEY)
+}
+
+export function getActiveClass(): ImportedClass | null {
+  return listImportedClasses().find((item) => item.classId === getActiveClassId()) ?? null
+}
+
+/** 请求头密钥 = 当前活动班级的班级密钥；未导入任何班级时不携带。 */
 export function getAdminToken(): string {
-  return sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? ''
+  return getActiveClass()?.teacherKey ?? ''
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -155,8 +210,10 @@ async function triggerFileDownload(response: Response, fallbackName: string): Pr
 
 export const api = {
   request,
-  currentClass: () => request<{ classId: string; name: string; studentCount: number } | null>('/classes/current'),
-  bootstrap: (className: string) => request<{ id: string; name: string }>('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className }) }),
+  /** 导入班级：新班级名 + 新密钥 = 建班；已有班级名 + 匹配密钥 = 幂等导入。 */
+  importClass: (className: string, teacherKey: string) => request<{ classId: string; name: string; studentCount: number }>('/classes/import', { method: 'POST', body: JSON.stringify({ className, teacherKey }) }),
+  /** 用密钥换取班级信息（密钥与班级一一对应）。 */
+  verifyClassKey: (teacherKey: string) => request<{ classId: string; name: string; studentCount: number }>('/classes/verify', { method: 'POST', body: JSON.stringify({ teacherKey }) }),
   listStudents: async (classId: string) => {
     const items: Array<{ id: string; studentNo: string; name: string; groups: Array<{ id: string; name: string }> }> = []
     let page = 1
@@ -190,8 +247,8 @@ export const api = {
     return result as Array<{ id: string; name: string; memberCount: number }>
   },
   createGroups: (classId: string, payload: { name: string; strategy?: 'manual' | 'balanced_random'; studentIds?: string[]; groupCount?: number }) => request<unknown>(`/classes/${encodeURIComponent(classId)}/groups`, { method: 'POST', body: JSON.stringify(payload) }),
-  listAssignments: async () => {
-    const raw = await request<unknown>('/assignments?pageSize=100')
+  listAssignments: async (classId: string) => {
+    const raw = await request<unknown>(`/assignments?classId=${encodeURIComponent(classId)}&pageSize=100`)
     const result = readListPage<AssignmentListItem>(raw, 1)
     return { items: result.items, total: result.total }
   },

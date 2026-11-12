@@ -6,7 +6,7 @@ import { HttpExceptionEnvelopeFilter } from './common/http-exception.filter.js'
 import { requestIdMiddleware } from './common/request.middleware.js'
 import { createRateLimitMiddleware } from './common/rate-limit.middleware.js'
 import { ResponseInterceptor } from './common/response.interceptor.js'
-import { ClassesController } from './classes/classes.controller.js'
+import { ClassImportController, ClassesController } from './classes/classes.controller.js'
 import { ClassesService } from './classes/classes.service.js'
 import { AssignmentsController, FilesController, PublicAssignmentsController, PublicFilesController, PublicSubmissionsController } from './assignments/assignments.controller.js'
 import { AssignmentsService } from './assignments/assignments.service.js'
@@ -18,6 +18,7 @@ import { ExportsService } from './exports/exports.service.js'
 @Module({
   controllers: [
     ClassesController,
+    ClassImportController,
     AssignmentsController,
     PublicAssignmentsController,
     PublicSubmissionsController,

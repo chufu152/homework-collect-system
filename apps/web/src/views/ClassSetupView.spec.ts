@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { api, setAdminToken, getAdminToken } = vi.hoisted(() => ({
-  api: { currentClass: vi.fn(), listStudents: vi.fn(), listGroups: vi.fn(), importStudents: vi.fn(), deleteStudent: vi.fn(), bootstrap: vi.fn(), createGroups: vi.fn() },
-  setAdminToken: vi.fn(),
-  getAdminToken: vi.fn(),
+const { api, client } = vi.hoisted(() => ({
+  api: { importClass: vi.fn(), verifyClassKey: vi.fn(), listStudents: vi.fn(), listGroups: vi.fn(), importStudents: vi.fn(), deleteStudent: vi.fn(), createGroups: vi.fn() },
+  client: {
+    addImportedClass: vi.fn(),
+    removeImportedClass: vi.fn(),
+    listImportedClasses: vi.fn(),
+    getActiveClass: vi.fn(),
+    setActiveClassId: vi.fn(),
+  },
 }))
 
-vi.mock('../api/client', () => ({ api, setAdminToken, getAdminToken }))
+vi.mock('../api/client', () => ({ api, ...client }))
 import ClassSetupView from './ClassSetupView.vue'
 
 const routerStubs = { RouterLink: { template: '<a><slot /></a>' }, teleport: true }
@@ -20,44 +25,128 @@ const twoStudents = {
   total: 2,
 }
 
+const entries = {
+  classA: { classId: 'class-1', name: '计科本2502', teacherKey: 'teacher-key', studentCount: 2 },
+  classB: { classId: 'class-2', name: '三年级一班', teacherKey: 'other-key-1', studentCount: 0 },
+}
+
+/** 默认上下文：浏览器里已导入班级 A（活动）与班级 B。 */
+function useDefaultClasses(): void {
+  let active: typeof entries.classA | null = entries.classA
+  client.getActiveClass.mockImplementation(() => active)
+  client.listImportedClasses.mockReturnValue([entries.classA, entries.classB])
+  client.setActiveClassId.mockImplementation((classId: string) => {
+    active = classId === entries.classA.classId ? entries.classA : entries.classB
+  })
+  client.removeImportedClass.mockImplementation((classId: string) => {
+    if (active?.classId === classId) active = null
+  })
+}
+
 async function openClassWithStudents(): Promise<ReturnType<typeof mount>> {
-  api.currentClass.mockResolvedValue({ classId: 'class-1', name: '计科本2502', studentCount: 2 })
+  useDefaultClasses()
   api.listStudents.mockResolvedValue(twoStudents)
   api.listGroups.mockResolvedValue([])
   const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-  await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-  await wrapper.get('.teacher-key-form').trigger('submit')
   await flushPromises()
   return wrapper
 }
 
-describe('class setup key handling', () => {
+describe('class import and switching', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    getAdminToken.mockReturnValue('')
-    api.currentClass.mockResolvedValue(null)
+    client.getActiveClass.mockReturnValue(null)
+    client.listImportedClasses.mockReturnValue([])
   })
 
-  it('re-enables the management key form after class loading completes', async () => {
+  it('imports a class with a name and key, then shows the toast and re-enables the form', async () => {
+    api.importClass.mockResolvedValue({ classId: 'class-new', name: '三年级一班', studentCount: 0 })
     const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-    await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
+    await wrapper.get('input[aria-label="班级名称"]').setValue('三年级一班')
+    await wrapper.get('input[aria-label="班级密钥"]').setValue('class-key-2026')
     await wrapper.get('.teacher-key-form').trigger('submit')
     await flushPromises()
 
-    expect(setAdminToken).toHaveBeenCalledWith('teacher-key')
+    expect(api.importClass).toHaveBeenCalledWith('三年级一班', 'class-key-2026')
+    expect(client.addImportedClass).toHaveBeenCalledWith({ classId: 'class-new', name: '三年级一班', teacherKey: 'class-key-2026', studentCount: 0 })
+    expect(wrapper.text()).toContain('已导入')
     expect(wrapper.get('.teacher-key-form button').attributes('disabled')).toBeUndefined()
-    expect(wrapper.text()).toContain('管理密钥已保存')
   })
 
-  it('prevents a management-key refresh from racing an in-flight roster import', async () => {
-    api.currentClass.mockResolvedValue({ classId: 'class-1', name: '三年级一班', studentCount: 0 })
+  it('re-imports an existing class with the key alone when no class name is filled', async () => {
+    api.verifyClassKey.mockResolvedValue({ classId: 'class-1', name: '计科本2502', studentCount: 29 })
+    const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
+    await wrapper.get('input[aria-label="班级密钥"]').setValue('teacher-key')
+    await wrapper.get('.teacher-key-form').trigger('submit')
+    await flushPromises()
+
+    expect(api.verifyClassKey).toHaveBeenCalledWith('teacher-key')
+    expect(api.importClass).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('导入成功')
+  })
+
+  it('explains a failed import and keeps the error message visible', async () => {
+    api.importClass.mockRejectedValue(new Error('该班级已存在，密钥不匹配。'))
+    const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
+    await wrapper.get('input[aria-label="班级名称"]').setValue('三年级一班')
+    await wrapper.get('input[aria-label="班级密钥"]').setValue('wrong-key-123')
+    await wrapper.get('.teacher-key-form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('该班级已存在，密钥不匹配。')
+    expect(client.addImportedClass).not.toHaveBeenCalled()
+  })
+
+  it('shows the import prompt before any class is imported', async () => {
+    const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('还没有导入任何班级')
+    expect(wrapper.text()).not.toContain('无法读取班级信息')
+  })
+
+  it('lists imported classes and switches the active one on demand', async () => {
+    useDefaultClasses()
+    api.listStudents.mockImplementation((classId: string) => Promise.resolve(
+      classId === entries.classA.classId ? twoStudents : { items: [], total: 0 }))
+    api.listGroups.mockResolvedValue([])
+    const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
+    await flushPromises()
+
+    const list = wrapper.get('ul[aria-label="已导入的班级"]')
+    expect(list.text()).toContain('计科本2502')
+    expect(list.text()).toContain('三年级一班')
+
+    const switchButton = list.findAll('.class-switch').find((button) => button.text().includes('三年级一班'))!
+    await switchButton.trigger('click')
+    await flushPromises()
+
+    expect(client.setActiveClassId).toHaveBeenCalledWith('class-2')
+    expect(api.listStudents).toHaveBeenCalledWith('class-2')
+    expect(wrapper.text()).toContain('班级还没有学生')
+  })
+
+  it('keeps roster data intact when a class is removed from this browser', async () => {
+    useDefaultClasses()
+    api.listStudents.mockResolvedValue(twoStudents)
+    api.listGroups.mockResolvedValue([])
+    const wrapper = await openClassWithStudents()
+
+    const removeButton = wrapper.get('ul[aria-label="已导入的班级"]').findAll('.class-remove')[0]
+    await removeButton.trigger('click')
+    await flushPromises()
+
+    expect(client.removeImportedClass).toHaveBeenCalledWith('class-1')
+    expect(wrapper.text()).toContain('还没有导入任何班级')
+  })
+
+  it('prevents an import action from racing an in-flight roster import', async () => {
+    useDefaultClasses()
     api.listStudents.mockResolvedValue({ items: [], total: 0 })
     api.listGroups.mockResolvedValue([])
     let finishImport!: (value: { created: number; updated: number; rejected: [] }) => void
     api.importStudents.mockReturnValue(new Promise((resolve) => { finishImport = resolve }))
     const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-    await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-    await wrapper.get('.teacher-key-form').trigger('submit')
     await flushPromises()
 
     await wrapper.findAll('button').find((button) => button.text() === '添加学生')!.trigger('click')
@@ -79,64 +168,31 @@ describe('class setup key handling', () => {
     expect(wrapper.get('.teacher-key-form button').attributes('disabled')).toBeUndefined()
   })
 
-  it('ignores a stale lookup that finishes after a newer key-triggered lookup', async () => {
-    let resolveOldLookup!: (value: { classId: string; name: string; studentCount: number } | null) => void
-    api.currentClass
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveOldLookup = resolve }))
-      .mockResolvedValueOnce(null)
-    getAdminToken.mockReturnValue('old-key')
+  it('keeps a failed roster lookup separate from a missing class and permits retry', async () => {
+    useDefaultClasses()
+    api.listStudents.mockRejectedValueOnce(new Error('管理密钥无效')).mockResolvedValueOnce({ items: [], total: 0 })
+    api.listGroups.mockResolvedValue([])
     const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-
-    await wrapper.get('input[aria-label="管理密钥"]').setValue('new-key')
-    await wrapper.get('.teacher-key-form').trigger('submit')
-    await flushPromises()
-    expect(wrapper.text()).toContain('创建唯一班级')
-
-    resolveOldLookup({ classId: 'stale-class', name: '过期班级', studentCount: 99 })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('创建唯一班级')
-    expect(wrapper.text()).not.toContain('过期班级')
-    expect(api.currentClass).toHaveBeenCalledTimes(2)
-  })
-
-  it('shows class creation for the documented null-class result', async () => {
-    const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-    await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-    await wrapper.get('.teacher-key-form').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('创建唯一班级')
-    expect(wrapper.text()).not.toContain('无法读取班级信息')
-  })
-
-  it('keeps a failed lookup separate from an uninitialized class and permits retry', async () => {
-    api.currentClass.mockRejectedValueOnce(new Error('管理密钥无效')).mockResolvedValueOnce(null)
-    const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-    await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-    await wrapper.get('.teacher-key-form').trigger('submit')
     await flushPromises()
 
     expect(wrapper.text()).toContain('管理密钥无效')
     expect(wrapper.text()).toContain('重新读取班级信息')
-    expect(wrapper.text()).not.toContain('创建唯一班级')
+    expect(wrapper.text()).not.toContain('还没有导入任何班级')
 
     const retry = wrapper.findAll('button').find((button) => button.text() === '重新读取班级信息')
     expect(retry).toBeDefined()
     await retry!.trigger('click')
     await flushPromises()
 
-    expect(api.currentClass).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('创建唯一班级')
+    expect(api.listStudents).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('班级还没有学生')
   })
 
   it('explains an empty roster and keeps member actions unavailable', async () => {
-    api.currentClass.mockResolvedValue({ classId: 'class-1', name: '三年级一班', studentCount: 0 })
+    useDefaultClasses()
     api.listStudents.mockResolvedValue({ items: [], total: 0 })
     api.listGroups.mockResolvedValue([])
     const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-    await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-    await wrapper.get('.teacher-key-form').trigger('submit')
     await flushPromises()
 
     expect(wrapper.text()).toContain('班级还没有学生')
@@ -215,14 +271,12 @@ describe('class setup key handling', () => {
   it('slides a top banner with a red dot after deletion and auto-dismisses it after two seconds', async () => {
     vi.useFakeTimers()
     try {
-      api.currentClass.mockResolvedValue({ classId: 'class-1', name: '计科本2502', studentCount: 2 })
+      useDefaultClasses()
       api.listStudents.mockResolvedValue(twoStudents)
       api.listGroups.mockResolvedValue([])
       api.deleteStudent.mockResolvedValue({ removed: true })
       const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-      await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-      await wrapper.get('.teacher-key-form').trigger('submit')
-      await vi.runAllTimersAsync()
+      await flushPromises()
 
       await wrapper.findAll('button').find((button) => button.text() === '删除学生')!.trigger('click')
       await vi.runAllTimersAsync()
@@ -246,14 +300,12 @@ describe('class setup key handling', () => {
   it('shows a green dot banner after a successful roster import', async () => {
     vi.useFakeTimers()
     try {
-      api.currentClass.mockResolvedValue({ classId: 'class-1', name: '计科本2502', studentCount: 0 })
+      useDefaultClasses()
       api.listStudents.mockResolvedValue({ items: [], total: 0 })
       api.listGroups.mockResolvedValue([])
       api.importStudents.mockResolvedValue({ created: 1, updated: 0, rejected: [] })
       const wrapper = mount(ClassSetupView, { global: { stubs: routerStubs } })
-      await wrapper.get('input[aria-label="管理密钥"]').setValue('teacher-key')
-      await wrapper.get('.teacher-key-form').trigger('submit')
-      await vi.runAllTimersAsync()
+      await flushPromises()
 
       await wrapper.findAll('button').find((button) => button.text() === '添加学生')!.trigger('click')
       await vi.runAllTimersAsync()

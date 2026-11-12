@@ -65,20 +65,19 @@ describe('PostgreSQL homework core flow', () => {
   }, 30000)
 
   it('initializes, imports students, publishes, uploads, reviews, and exports a homework assignment', async () => {
-    const noToken = await fetch(`${serverUrl}/api/v1/classes/current`)
+    const noToken = await fetch(`${serverUrl}/api/v1/classes/${'cm-no-such-class'}/students`)
     expect(noToken.status).toBe(401)
 
-    // Before bootstrap the endpoint must still return a parseable JSON envelope.
-    const emptyClass = await api('/classes/current')
-    expect(emptyClass.response.status).toBe(200)
+    // 未导入任何班级时，公开的密钥校验端点也必须返回可解析的 JSON 信封。
+    const emptyClass = await api('/classes/verify', { method: 'POST', body: JSON.stringify({ teacherKey: 'no-such-class-key' }) })
+    expect(emptyClass.response.status).toBe(401)
     expect(emptyClass.response.headers.get('content-type')).toContain('application/json')
-    expect(emptyClass.body).toMatchObject({ code: 'OK', data: null })
 
-    const initialized = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '三年级一班' }) })
+    const initialized = await api('/classes/import', { method: 'POST', body: JSON.stringify({ className: '三年级一班', teacherKey: adminToken }) })
     expect(initialized.response.status, JSON.stringify(initialized.body)).toBe(201)
-    const classId = initialized.body.data.id as string
+    const classId = initialized.body.data.classId as string
 
-    const duplicateClass = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '另一班' }) })
+    const duplicateClass = await api('/classes/import', { method: 'POST', body: JSON.stringify({ className: '另一班', teacherKey: adminToken }) })
     expect(duplicateClass.response.status).toBe(409)
 
     const imported = await api(`/classes/${classId}/students`, {
@@ -92,6 +91,7 @@ describe('PostgreSQL homework core flow', () => {
 
     const published = await api('/assignments', {
       method: 'POST', body: JSON.stringify({
+        classId,
         title: '周五数学练习', type: 'online', instructions: '请提交练习答案。', target: { mode: 'all' },
         submissionMode: 'both', dueAt: '2026-11-20T12:00:00.000Z', publishNow: true,
       }),

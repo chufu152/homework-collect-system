@@ -17,6 +17,11 @@ export class AssignmentTargetDto {
 }
 
 export class CreateAssignmentDto {
+  /** 作业归属班级；AdminGuard 会校验请求密钥是否属于该班级。 */
+  @IsString()
+  @Length(1, 64)
+  classId!: string
+
   @IsString()
   @Length(1, 120)
   title!: string

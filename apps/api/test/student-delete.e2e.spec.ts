@@ -64,12 +64,12 @@ describe('DELETE /classes/{classId}/students/{studentId}', () => {
   }, 30000)
 
   it('removes a student without submissions, rejects unknown ids, and blocks students with submissions', async () => {
-    const noToken = await fetch(`${serverUrl}/api/v1/classes/current`)
+    const noToken = await fetch(`${serverUrl}/api/v1/classes/${'cm-no-such-class'}/students`)
     expect(noToken.status).toBe(401)
 
-    const initialized = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '删除演练班' }) })
+    const initialized = await api('/classes/import', { method: 'POST', body: JSON.stringify({ className: '删除演练班', teacherKey: adminToken }) })
     expect(initialized.response.status, JSON.stringify(initialized.body)).toBe(201)
-    const classId = initialized.body.data.id as string
+    const classId = initialized.body.data.classId as string
 
     const imported = await api(`/classes/${classId}/students`, {
       method: 'PUT', body: JSON.stringify({ students: [
@@ -97,6 +97,7 @@ describe('DELETE /classes/{classId}/students/{studentId}', () => {
 
     const published = await api('/assignments', {
       method: 'POST', body: JSON.stringify({
+        classId,
         title: '随堂小练', type: 'online', instructions: '请提交答案。', target: { mode: 'all' },
         submissionMode: 'text', publishNow: true,
       }),

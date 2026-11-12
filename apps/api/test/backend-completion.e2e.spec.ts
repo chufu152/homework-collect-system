@@ -82,8 +82,8 @@ describe('backend completion: readiness, validation, history and streaming', () 
     expect(healthBody.code).toBe('OK')
     expect(healthBody.data.status).toBe('ok')
 
-    const initialized = await api('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '八年级一班' }) })
-    const classId = initialized.body.data.id as string
+    const initialized = await api('/classes/import', { method: 'POST', body: JSON.stringify({ className: '八年级一班', teacherKey: adminToken }) })
+    const classId = initialized.body.data.classId as string
     await api(`/classes/${classId}/students`, {
       method: 'PUT', body: JSON.stringify({ students: [
         { studentNo: '8001', name: '周同学' }, { studentNo: '8002', name: '吴同学' },
@@ -92,6 +92,7 @@ describe('backend completion: readiness, validation, history and streaming', () 
 
     const created = await api('/assignments', {
       method: 'POST', body: JSON.stringify({
+        classId,
         title: '后端验收作业', type: 'online', submissionMode: 'both', publishNow: true, target: { mode: 'all' },
       }),
     })
@@ -164,6 +165,7 @@ describe('backend completion: readiness, validation, history and streaming', () 
     // Text-only assignments must not silently store uploaded files.
     const textOnly = await api('/assignments', {
       method: 'POST', body: JSON.stringify({
+        classId,
         title: '纯文本作业', type: 'online', submissionMode: 'text', publishNow: true, target: { mode: 'all' },
       }),
     })

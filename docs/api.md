@@ -13,7 +13,7 @@
   { "code": "OK", "message": "ok", "data": { }, "requestId": "..." }
   ```
 
-  前端只消费 `data`。空结果统一以 `data: null` 的 JSON 信封返回（例如 `GET /classes/current` 在尚未初始化班级时），不再使用空响应体。
+  前端只消费 `data`。空结果统一以 `data: null` 的 JSON 信封返回，不再使用空响应体。
   文件下载接口直接返回二进制流，不使用信封，通过 `Content-Disposition: attachment; filename*=UTF-8''...` 给出文件名。
 - **错误信封**：
 
@@ -35,7 +35,11 @@
   | 500 | `INTERNAL_ERROR` | 未预期错误 |
 
 - **鉴权方式**（每个接口在下文单独标注）：
-  - `管理令牌`：请求头 `X-Demo-Admin-Token: <DEMO_ADMIN_TOKEN>`。服务端要求该环境变量长度 ≥ 32 且不是示例值，否则所有管理接口返回 503。比较使用恒定时间算法。
+  - `班级密钥`：请求头 `X-Demo-Admin-Token: <该班级的 teacherKey>`。每个班级持有独立密钥，
+    服务端按路由解析操作归属的班级（`:classId` 直接可得；`:assignmentId` / `:submissionId` 回溯；
+    列表/创建类接口要求显式携带 `classId` query/body），并常数时间比对密钥的 SHA-256 哈希。
+    迁移前的历史班级（无哈希）回退到部署级 `DEMO_ADMIN_TOKEN`（≥ 32 位且非示例值）。
+  - 密钥不匹配返回 `401`；班级不存在返回 `404`。
   - `分享码`：路径参数 `shareCode`（24 字节随机数，base64url）。只暴露单条作业信息，不返回全班名单。
   - `回执码`：路径/查询参数 `receiptCode`（24 字节随机数）。只能读取本人提交与反馈。
   - `无`：无需任何凭据。
@@ -59,7 +63,7 @@ npm run dev:api               # http://127.0.0.1:3000/api/v1
 npm run dev:web               # http://127.0.0.1:5173（已配置 /api 代理）
 ```
 
-浏览器打开 `http://127.0.0.1:5173/class/setup`，先填入与 `.env` 一致的 `DEMO_ADMIN_TOKEN` 并保存到会话，再建立班级、导入名单。
+浏览器打开 `http://127.0.0.1:5173/class/setup`，填写班级名称与班级密钥完成导入（新名称即建班，密钥 ≥ 8 位），再整理名单。支持多个班级，每个班级密钥独立。
 `db:push` 仍保留，仅供本地快速试改 schema；已部署的环境一律用 `db:deploy` 应用版本化迁移。
 
 Docker 部署（前端 nginx 反代 `/api` 到 API 服务）：
@@ -107,18 +111,22 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
 
 ## 3. 管理端接口
 
-### 3.1 `POST /demo/bootstrap` — 初始化唯一班级
+### 3.1 `POST /classes/import` — 导入班级（建班或幂等导入）
 
-- **鉴权**：管理令牌
-- **请求体**：`{ "className": string (1–80) }`
-- **响应 201**：`{ id, name, createdAt, _count: { students: 0 } }`
-- **错误**：`409` 已存在班级（demo 只允许一个班级）；`400` 名称为空/超长。
+- **鉴权**：无（密钥本身就是凭据）
+- **请求体**：`{ "className": string (1–80), "teacherKey": string (8–128) }`
+- **语义**：班级名不存在 → 以该密钥建立新班级（服务端只存 SHA-256 哈希）；
+  班级名已存在且密钥匹配 → 幂等导入，直接返回班级信息；
+  班级名已存在但密钥不匹配 → `409`；同一密钥不允许绑定第二个班级名 → `409`；
+  迁移前创建的历史班级（`teacherKeyHash` 为空）在首次导入时认领提交的密钥。
+- **响应 201**：`{ classId, name, studentCount }`
 
-### 3.2 `GET /classes/current` — 查询当前班级
+### 3.2 `POST /classes/verify` — 用密钥换取班级信息
 
-- **鉴权**：管理令牌
-- **响应 200**：`{ classId, name, studentCount }`；未初始化时仍返回标准信封，其中 `data` 为 `null`。
-- **错误**：`401` 令牌无效。E2E 以此接口验证无令牌访问被拒。
+- **鉴权**：无（密钥即凭据）
+- **请求体**：`{ "teacherKey": string (8–128) }`
+- **响应 200**：`{ classId, name, studentCount }`；一个密钥只对应一个班级。
+- **错误**：`401` 密钥不匹配；`400` 密钥格式不合法。
 
 ### 3.3 `GET /classes/{classId}/students` — 分页查询名单
 
@@ -411,12 +419,12 @@ Compose 会依次启动 PostgreSQL、`migrate`（`prisma migrate deploy`）、AP
   能力链接片段替换为 `:token`；不落库、不记录令牌或正文，长期留存需在正式版接入日志平台。
 - **能力链接仍无过期与撤销机制**：`shareCode` / `receiptCode` 生成后长期有效；关闭作业只停止公开操作，不作废已有回执码，
   链接泄露后无法单独吊销。补齐需要数据模型与运维流程变更，属正式版范围。
-- **管理令牌仍无轮换**：`DEMO_ADMIN_TOKEN` 是静态环境变量，轮换需重启服务。
+- **班级密钥无轮换界面**：班级密钥以 SHA-256 哈希落库，重置需要直接操作数据库或重新导入认领。
 - 上述后两项是 demo 明确接受的安全边界，**试点承载真实学生数据前必须补齐并重新评估**。
 
 ## 6. 已知限制
 
-- 单班级、无登录、无多租户；`POST /demo/bootstrap` 只能执行一次。
+- 多班级、无登录：每个班级以独立密钥管理（导入即凭据）；密钥丢失只能通过数据库重置。
 - 已提供版本化迁移（`apps/api/prisma/migrations/`，Compose 用 `prisma migrate deploy`），但**尚未在真实 PostgreSQL
   实例上执行过 `migrate deploy`**；本机无 Docker/独立 PostgreSQL，迁移 SQL 由 PGlite 直接执行并驱动全部 E2E，
   建表、枚举、外键与索引均生效。`prisma migrate diff --from-migrations` 的 shadow database 一致性校验因

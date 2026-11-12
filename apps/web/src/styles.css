@@ -262,6 +262,16 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
   *, *::before, *::after { scroll-behavior: auto!important; transition-duration: .01ms!important; }
 }
 
+/* ---- 班级导入：已导入班级切换列表 ---- */
+.imported-class-list { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 11px; background: #fff; list-style: none; overflow: hidden; }
+.imported-class-list li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #eef2f0; }
+.imported-class-list li:last-child { border-bottom: 0; }
+.imported-class-list li.is-active { background: #f2f8f5; }
+.class-switch { display: inline-flex; align-items: center; gap: 9px; padding: 4px 2px; border: 0; background: none; cursor: pointer; color: var(--ink); font-size: 14px; font-weight: 600; }
+.class-dot { width: 9px; height: 9px; border-radius: 50%; background: #c9d6d0; }
+.imported-class-list li.is-active .class-dot { background: var(--sea); }
+.class-remove { margin-left: auto; min-height: 32px; padding: 4px 10px; font-size: 12px; }
+
 /* ---- 班级管理：成员列表 ---- */
 .member-panel { display: flex; flex-direction: column; gap: 16px; }
 .member-list { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 13px; background: #fff; list-style: none; overflow: hidden; }

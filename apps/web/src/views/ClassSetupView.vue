@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { api, getAdminToken, setAdminToken } from '../api/client'
+import { api, addImportedClass, getActiveClass, listImportedClasses, removeImportedClass, setActiveClassId, type ImportedClass } from '../api/client'
 import { describeError } from '../api/error-messages'
 
 const className = ref('')
-const adminToken = ref(getAdminToken())
+const classKey = ref('')
+const importedClasses = ref<ImportedClass[]>([])
 const classInfo = ref<{ classId: string; name: string; studentCount: number } | null>(null)
 const rosterText = ref('')
 const loading = ref(false)
@@ -108,42 +109,75 @@ async function runConfirmed(): Promise<void> {
   }
 }
 
-async function saveKey(): Promise<void> {
+/**
+ * 导入班级：填写班级名称 + 班级密钥 → 建立新班级或幂等导入已有班级；
+ * 只填密钥则按密钥找回已导入过的班级。成功后加入本浏览器保存的班级列表并切换为活动班级。
+ */
+async function importClassNow(): Promise<void> {
   if (importing.value || savingGroup.value || deleting.value) return
+  const key = classKey.value.trim()
+  if (!key) {
+    errorMessage.value = '请填写班级密钥（至少 8 位）。'
+    return
+  }
   savingKey.value = true
-  setAdminToken(adminToken.value.trim())
-  showToast('管理密钥已保存到当前浏览器会话。', 'success')
+  errorMessage.value = ''
   try {
+    const name = className.value.trim()
+    const info = name
+      ? await api.importClass(name, key)
+      : await api.verifyClassKey(key)
+    addImportedClass({ classId: info.classId, name: info.name, teacherKey: key, studentCount: info.studentCount })
+    importedClasses.value = listImportedClasses()
+    classKey.value = ''
+    showToast(name ? `班级「${info.name}」已导入。` : `班级「${info.name}」导入成功。`, 'success')
     await loadClass()
+  } catch (error) {
+    errorMessage.value = describeError(error, '班级导入失败。')
   } finally {
     savingKey.value = false
   }
 }
 
+function switchClass(classId: string): void {
+  if (busy.value || loading.value) return
+  if (getActiveClass()?.classId === classId) return
+  setActiveClassId(classId)
+  importedClasses.value = listImportedClasses()
+  void loadClass()
+}
+
+function removeClass(classId: string): void {
+  if (busy.value) return
+  removeImportedClass(classId)
+  importedClasses.value = listImportedClasses()
+  showToast('已从本浏览器移除该班级（云端数据不受影响）。', 'danger')
+  void loadClass()
+}
+
 async function loadClass(): Promise<void> {
-  // C1：允许新密钥触发的读取覆盖旧请求；较早的响应不能覆盖较新的班级状态。
+  // C1：允许切换班级触发的读取覆盖旧请求；较早的响应不能覆盖较新的班级状态。
   const sequence = ++classLoadSequence
   loading.value = true
   loadError.value = ''
   errorMessage.value = ''
+  const active = getActiveClass()
+  if (!active) {
+    classInfo.value = null
+    students.value = []
+    groups.value = []
+    loading.value = false
+    return
+  }
   try {
-    // `data: null` 表示班级尚未初始化，不是「已存在但为空」。
-    const currentClass = await api.currentClass()
+    const [roster, groupList] = await Promise.all([
+      api.listStudents(active.classId),
+      api.listGroups(active.classId),
+    ])
     if (sequence !== classLoadSequence) return
-    classInfo.value = currentClass
-    if (currentClass) {
-      const [roster, groupList] = await Promise.all([
-        api.listStudents(currentClass.classId),
-        api.listGroups(currentClass.classId),
-      ])
-      if (sequence !== classLoadSequence) return
-      students.value = roster.items
-      groups.value = groupList
-      classInfo.value = { ...currentClass, studentCount: roster.total }
-    } else {
-      students.value = []
-      groups.value = []
-    }
+    students.value = roster.items
+    groups.value = groupList
+    classInfo.value = { classId: active.classId, name: active.name, studentCount: roster.total }
   } catch (error) {
     if (sequence !== classLoadSequence) return
     classInfo.value = null
@@ -152,25 +186,6 @@ async function loadClass(): Promise<void> {
     loadError.value = describeError(error, '无法读取班级信息。')
   } finally {
     if (sequence === classLoadSequence) loading.value = false
-  }
-}
-
-async function createClass(): Promise<void> {
-  errorMessage.value = ''
-  if (!className.value.trim()) {
-    errorMessage.value = '请填写班级名称。'
-    return
-  }
-  savingKey.value = true
-  setAdminToken(adminToken.value.trim())
-  try {
-    const created = await api.bootstrap(className.value.trim())
-    classInfo.value = { classId: created.id, name: created.name, studentCount: 0 }
-    showToast('班级已建立，可以添加学生。', 'success')
-  } catch (error) {
-    errorMessage.value = describeError(error, '班级暂时无法创建。')
-  } finally {
-    savingKey.value = false
   }
 }
 
@@ -293,7 +308,8 @@ function confirmGroup(): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown)
-  if (adminToken.value) void loadClass()
+  importedClasses.value = listImportedClasses()
+  if (getActiveClass()) void loadClass()
 })
 
 onBeforeUnmount(() => {
@@ -313,29 +329,38 @@ onBeforeUnmount(() => {
 
     <main class="page-wrap">
       <div class="page-heading">
-        <div><p class="eyebrow">一个班级 · 开始使用</p><h1>班级名单</h1><p>先设置管理密钥，再建立班级并整理学生名单。</p></div>
+        <div><p class="eyebrow">班级管理 · 开始使用</p><h1>班级名单</h1><p>每个班级持有独立密钥；导入班级后即可整理学生名单与分组。</p></div>
         <span v-if="classInfo" class="count-chip">{{ classInfo.studentCount }} 位学生</span>
       </div>
 
       <section class="surface panel form-grid">
         <div>
           <p class="eyebrow">教师管理</p>
-          <h2 style="margin: 5px 0 8px; font-size: 18px">管理密钥</h2>
-          <p class="muted-copy">本 demo 不设账号密码。管理密钥由项目运行环境提供，只保存在当前浏览器会话中。</p>
+          <h2 style="margin: 5px 0 8px; font-size: 18px">导入班级</h2>
+          <p class="muted-copy">填写班级名称和班级密钥：新名称会建立新班级，已有名称会校验密钥后导入。支持多个班级，导入过的班级保存在本浏览器，可随时切换。</p>
         </div>
-        <form class="teacher-key-form" @submit.prevent="saveKey">
-          <input v-model="adminToken" type="password" autocomplete="current-password" aria-label="管理密钥" placeholder="粘贴管理密钥" required />
-          <button class="button secondary" type="submit" :disabled="savingKey || busy">保存密钥</button>
+
+        <ul v-if="importedClasses.length" class="imported-class-list" aria-label="已导入的班级">
+          <li v-for="entry in importedClasses" :key="entry.classId" :class="{ 'is-active': entry.classId === classInfo?.classId }">
+            <button class="class-switch" type="button" :title="`切换到 ${entry.name}`" @click="switchClass(entry.classId)">
+              <span class="class-dot" aria-hidden="true"></span>{{ entry.name }}
+            </button>
+            <button class="button quiet class-remove" type="button" @click="removeClass(entry.classId)">移除</button>
+          </li>
+        </ul>
+
+        <form class="teacher-key-form" @submit.prevent="importClassNow">
+          <input v-model="className" aria-label="班级名称" placeholder="班级名称（新名称将建立新班级）" maxlength="80" />
+          <input v-model="classKey" type="password" autocomplete="current-password" aria-label="班级密钥" placeholder="粘贴班级密钥（至少 8 位）" required />
+          <button class="button secondary" type="submit" :disabled="savingKey || busy">导入班级</button>
         </form>
+        <p v-if="errorMessage" class="field-message error-text" role="alert">{{ errorMessage }}</p>
         <p v-if="loading" class="field-note" role="status">正在读取班级信息…</p>
         <p v-if="loadError" class="field-message error-text" role="alert">{{ loadError }} <button class="button quiet" type="button" @click="loadClass">重新读取班级信息</button></p>
       </section>
 
       <section v-if="!loading && !loadError && !classInfo" class="surface panel form-grid" style="margin-top: 16px">
-        <div><p class="eyebrow">建立班级</p><h2 style="margin: 5px 0 8px; font-size: 18px">创建唯一班级</h2><p class="muted-copy">demo 只支持一个班级；班级建好后可反复更新名单。</p></div>
-        <label class="field-block"><span>班级名称</span><input v-model="className" placeholder="例如：三年级一班" maxlength="80" required /></label>
-        <p v-if="errorMessage" class="field-message error-text" role="alert">{{ errorMessage }}</p>
-        <button class="button primary" type="button" :disabled="savingKey || loading" @click="createClass">{{ savingKey ? '正在创建…' : '建立班级' }}</button>
+        <div><p class="eyebrow">从这里开始</p><h2 style="margin: 5px 0 8px; font-size: 18px">还没有导入任何班级</h2><p class="muted-copy">在上方填写班级名称与班级密钥完成导入；只有首次建班需要自定密钥，之后同一密钥可在任何浏览器重新导入该班级。</p></div>
       </section>
 
       <!-- 班级成员列表（主体） -->

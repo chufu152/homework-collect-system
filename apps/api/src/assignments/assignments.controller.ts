@@ -13,12 +13,13 @@ export class AssignmentsController {
 
   @Get('assignments')
   list(
+    @Query('classId') classId?: string,
     @Query('type') type?: string,
     @Query('state') state?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    return this.assignments.list({ type, state, page, pageSize })
+    return this.assignments.list({ classId, type, state, page, pageSize })
   }
 
   @Post('assignments')

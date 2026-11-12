@@ -59,8 +59,8 @@ describe('offline, check-in, and relay assignment flows', () => {
   }, 30000)
 
   it('records a reversible offline completion and generates the missing names', async () => {
-    const setup = await call('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '四年级二班' }) })
-    const classId = setup.body.data.id as string
+    const setup = await call('/classes/import', { method: 'POST', body: JSON.stringify({ className: '四年级二班', teacherKey: adminToken }) })
+    const classId = setup.body.data.classId as string
     const imported = await call(`/classes/${classId}/students`, { method: 'PUT', body: JSON.stringify({ students: [
       { studentNo: '4001', name: '甲同学' }, { studentNo: '4002', name: '乙同学' }, { studentNo: '4003', name: '丙同学' },
     ] }) })
@@ -68,7 +68,7 @@ describe('offline, check-in, and relay assignment flows', () => {
     const roster = await call(`/classes/${classId}/students?pageSize=10`)
     const students = roster.body.data.items as Array<{ id: string; name: string }>
 
-    const create = await call('/assignments', { method: 'POST', body: JSON.stringify({ title: '实验课带齐材料', type: 'offline', target: { mode: 'all' }, publishNow: true }) })
+    const create = await call('/assignments', { method: 'POST', body: JSON.stringify({ classId, title: '实验课带齐材料', type: 'offline', target: { mode: 'all' }, publishNow: true }) })
     const assignmentId = create.body.data.id as string
     const completion = await call(`/assignments/${assignmentId}/completions/${students[0].id}`, { method: 'PUT', body: JSON.stringify({ completed: true }) })
     expect(completion.body.data.completed).toBe(true)
@@ -81,13 +81,13 @@ describe('offline, check-in, and relay assignment flows', () => {
   }, 30000)
 
   it('makes repeated check-in idempotent and rejects ambiguous names', async () => {
-    const setup = await call('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '五年级一班' }) })
-    const classId = setup.body.data.id as string
+    const setup = await call('/classes/import', { method: 'POST', body: JSON.stringify({ className: '五年级一班', teacherKey: adminToken }) })
+    const classId = setup.body.data.classId as string
     const imported = await call(`/classes/${classId}/students`, { method: 'PUT', body: JSON.stringify({ students: [
       { studentNo: '5001', name: '李同学' }, { studentNo: '5002', name: '李同学' }, { studentNo: '5003', name: '张同学' },
     ] }) })
     expect(imported.body.data.created).toBe(3)
-    const created = await call('/assignments', { method: 'POST', body: JSON.stringify({ title: '周一早读签到', type: 'checkin', target: { mode: 'all' }, publishNow: true }) })
+    const created = await call('/assignments', { method: 'POST', body: JSON.stringify({ classId, title: '周一早读签到', type: 'checkin', target: { mode: 'all' }, publishNow: true }) })
     const shareCode = created.body.data.shareCode as string
 
     const ambiguous = await call(`/public/assignments/${shareCode}/check-ins`, { method: 'POST', body: JSON.stringify({ studentName: '李同学' }) })
@@ -101,13 +101,13 @@ describe('offline, check-in, and relay assignment flows', () => {
   }, 30000)
 
   it('assigns relay positions once and rejects duplicate entries', async () => {
-    const setup = await call('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '六年级三班' }) })
-    const classId = setup.body.data.id as string
+    const setup = await call('/classes/import', { method: 'POST', body: JSON.stringify({ className: '六年级三班', teacherKey: adminToken }) })
+    const classId = setup.body.data.classId as string
     const imported = await call(`/classes/${classId}/students`, { method: 'PUT', body: JSON.stringify({ students: [
       { studentNo: '6001', name: '王一' }, { studentNo: '6002', name: '王二' }, { studentNo: '6003', name: '王三' },
     ] }) })
     expect(imported.body.data.created).toBe(3)
-    const created = await call('/assignments', { method: 'POST', body: JSON.stringify({ title: '周末阅读接龙', type: 'relay', target: { mode: 'all' }, publishNow: true }) })
+    const created = await call('/assignments', { method: 'POST', body: JSON.stringify({ classId, title: '周末阅读接龙', type: 'relay', target: { mode: 'all' }, publishNow: true }) })
     const shareCode = created.body.data.shareCode as string
 
     const first = await call(`/public/assignments/${shareCode}/relay-entries`, { method: 'POST', body: JSON.stringify({ studentNo: '6001', studentName: '王一', content: '《西游记》' }) })
@@ -122,8 +122,8 @@ describe('offline, check-in, and relay assignment flows', () => {
   }, 30000)
 
   it('freezes a selected audience and stops public actions after closing', async () => {
-    const setup = await call('/demo/bootstrap', { method: 'POST', body: JSON.stringify({ className: '七年级一班' }) })
-    const classId = setup.body.data.id as string
+    const setup = await call('/classes/import', { method: 'POST', body: JSON.stringify({ className: '七年级一班', teacherKey: adminToken }) })
+    const classId = setup.body.data.classId as string
     await call(`/classes/${classId}/students`, { method: 'PUT', body: JSON.stringify({ students: [
       { studentNo: '7001', name: '赵一' }, { studentNo: '7002', name: '钱二' }, { studentNo: '7003', name: '孙三' },
     ] }) })
@@ -132,6 +132,7 @@ describe('offline, check-in, and relay assignment flows', () => {
     const created = await call('/assignments', {
       method: 'POST',
       body: JSON.stringify({
+        classId,
         title: '定向签到', type: 'checkin', publishNow: true,
         target: { mode: 'students', studentIds: [students[0].id, students[1].id] },
       }),

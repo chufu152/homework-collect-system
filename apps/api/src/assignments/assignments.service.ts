@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { randomBytes } from 'node:crypto'
 import type { Express } from 'express'
 import { formatMissingMentions } from '@homework/contracts'
-import { compareSecrets, isValidAdminToken } from '../common/admin-token.js'
+import { compareSecrets, isValidAdminToken, keyMatchesHash } from '../common/admin-token.js'
 import { PrismaService } from '../prisma/prisma.service.js'
 import { formatSafeFolderName, getSubmissionStatus, resolveStudent } from './assignment-policy.js'
 import { ExportsService } from '../exports/exports.service.js'
@@ -35,7 +35,9 @@ export class AssignmentsService {
     private readonly exports: ExportsService,
   ) {}
 
-  async list(query: { type?: string; state?: string; page?: string; pageSize?: string }) {
+  async list(query: { classId?: string; type?: string; state?: string; page?: string; pageSize?: string }) {
+    const classId = query.classId?.trim()
+    if (!classId) throw new BadRequestException('classId is required.')
     if (query.type && !['online', 'offline', 'checkin', 'relay'].includes(query.type)) {
       throw new BadRequestException('type must be online, offline, checkin, or relay.')
     }
@@ -45,6 +47,7 @@ export class AssignmentsService {
     const page = Math.min(100000, Math.max(1, Number.parseInt(query.page ?? '1', 10) || 1))
     const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize ?? '20', 10) || 20))
     const where = {
+      classId,
       ...(query.type ? { type: query.type as never } : {}),
       ...(query.state ? { state: query.state as never } : {}),
     }
@@ -88,7 +91,7 @@ export class AssignmentsService {
   }
 
   async create(input: CreateAssignmentDto) {
-    const classroom = await this.prisma.classroom.findFirst({ select: { id: true } })
+    const classroom = await this.prisma.classroom.findUnique({ where: { id: input.classId }, select: { id: true } })
     if (!classroom) throw new NotFoundException('Create the class before publishing an assignment.')
     const roster = await this.prisma.student.findMany({
       where: { classId: classroom.id },
@@ -507,10 +510,10 @@ export class AssignmentsService {
   async getDownload(fileId: string, receiptCode?: string, adminToken?: string) {
     const file = await this.prisma.submissionFile.findUnique({
       where: { id: fileId },
-      include: { version: { include: { submission: { select: { receiptCode: true } } } } },
+      include: { version: { include: { submission: { select: { receiptCode: true, assignmentId: true } } } } },
     })
     if (!file) throw new NotFoundException('File not found.')
-    const hasAdminAccess = isValidAdminToken(adminToken)
+    const hasAdminAccess = await this.hasTeacherAccess(file.version.submission.assignmentId, adminToken)
     if (!hasAdminAccess && !compareSecrets(receiptCode, file.version.submission.receiptCode)) {
       throw new NotFoundException('File not found.')
     }
@@ -520,6 +523,20 @@ export class AssignmentsService {
       downloadName: safeDownloadName(file.originalName),
       sizeBytes: file.sizeBytes,
     }
+  }
+
+  /** 教师无回执码下载附件时，用「提交所属班级」的独立密钥校验；历史班级回退部署级令牌。 */
+  private async hasTeacherAccess(assignmentId: string, adminToken?: string): Promise<boolean> {
+    if (!adminToken?.trim()) return false
+    const assignment = await this.prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      select: { classroom: { select: { teacherKeyHash: true } } },
+    })
+    if (!assignment) return false
+    if (assignment.classroom.teacherKeyHash) {
+      return keyMatchesHash(adminToken, assignment.classroom.teacherKeyHash)
+    }
+    return isValidAdminToken(adminToken)
   }
 
   async getSubmissionDownload(assignmentId: string, submissionId: string, fileId: string) {

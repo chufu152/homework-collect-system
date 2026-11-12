@@ -19,9 +19,11 @@ function fileService() {
         contentType: 'application/pdf',
         originalName: 'answer.pdf',
         sizeBytes: 3,
-        version: { submission: { receiptCode: 'real-receipt-code' } },
+        version: { submission: { receiptCode: 'real-receipt-code', assignmentId: 'assignment-1' } },
       }),
     },
+    // 历史班级（teacherKeyHash 为空）回退到部署级 DEMO_ADMIN_TOKEN。
+    assignment: { findUnique: vi.fn().mockResolvedValue({ classroom: { teacherKeyHash: '' } }) },
   }
   const storage = { openReadStream: vi.fn().mockResolvedValue('a-stream') }
   return { service: new AssignmentsService(prisma as never, storage as never, {} as never), storage }
@@ -65,7 +67,7 @@ describe('assignment list completion counts', () => {
       },
     ]
     const { service } = serviceForLists(rows)
-    const result = await service.list({})
+    const result = await service.list({ classId: 'class-1' })
     expect(result.items.map((item) => [item.submittedCount, item.missingCount])).toEqual([[2, 1], [1, 2]])
   })
 })

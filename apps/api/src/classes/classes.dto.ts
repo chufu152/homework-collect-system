@@ -7,6 +7,23 @@ export class BootstrapDto {
   className!: string
 }
 
+export class ImportClassDto {
+  @IsString()
+  @Length(1, 80)
+  className!: string
+
+  /** 班级独立密钥（明文仅在导入时提交，服务端只存 SHA-256 哈希）。 */
+  @IsString()
+  @Length(8, 128)
+  teacherKey!: string
+}
+
+export class VerifyClassKeyDto {
+  @IsString()
+  @Length(8, 128)
+  teacherKey!: string
+}
+
 export class StudentRowDto {
   @IsString()
   @Length(1, 40)

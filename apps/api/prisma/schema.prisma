@@ -38,12 +38,13 @@ model DemoState {
 }
 
 model Classroom {
-  id          String       @id @default(cuid())
-  name        String
-  createdAt   DateTime     @default(now())
-  students    Student[]
-  groups      StudentGroup[]
-  assignments Assignment[]
+  id             String       @id @default(cuid())
+  name           String
+  teacherKeyHash String       @default("")
+  createdAt      DateTime     @default(now())
+  students       Student[]
+  groups         StudentGroup[]
+  assignments    Assignment[]
 }
 
 model Student {

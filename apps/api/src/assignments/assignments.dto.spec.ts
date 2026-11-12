@@ -7,6 +7,7 @@ import { CreateAssignmentDto, SubmitDto } from './assignments.dto.js'
 
 async function validateAssignment(overrides: Record<string, unknown>) {
   const dto = plainToInstance(CreateAssignmentDto, {
+    classId: 'cm-class-0000000000000000',
     title: '课堂练习',
     type: 'online',
     target: { mode: 'all' },

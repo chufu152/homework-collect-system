@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { api } = vi.hoisted(() => ({ api: { listAssignments: vi.fn() } }))
+const { api, getActiveClass } = vi.hoisted(() => ({
+  api: { listAssignments: vi.fn() },
+  getActiveClass: vi.fn(),
+}))
 
-vi.mock('../api/client', () => ({ api }))
+vi.mock('../api/client', () => ({ api, getActiveClass }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 import TeacherHomeView from './TeacherHomeView.vue'
 
@@ -26,6 +29,7 @@ function assignment(id: string, state: 'draft' | 'published' | 'closed') {
 describe('teacher home assignment boundaries', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    getActiveClass.mockReturnValue({ classId: 'class-1', name: '三年级一班', teacherKey: 'teacher-key' })
     api.listAssignments.mockResolvedValue({ items: [], total: 0 })
   })
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api, type AssignmentListItem } from '../api/client'
+import { api, type AssignmentListItem, getActiveClass } from '../api/client'
 import { describeError } from '../api/error-messages'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -41,20 +41,23 @@ async function loadClass(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    // C1：`data: null` 表示班级未初始化；必须结束 loading 并给出可见解释，
-    // 不能让页面永久停在「正在读取班级名单…」。
-    classInfo.value = await api.currentClass()
-    if (!classInfo.value) {
+    // 多班级：活动班级保存在本浏览器；未导入任何班级时给出可见指引。
+    const active = getActiveClass()
+    if (!active) {
+      classInfo.value = null
       groups.value = []
       students.value = []
+      loadError.value = '尚未导入班级：请先到「班级名单」页填写班级名称与班级密钥完成导入。'
       return
     }
+    classInfo.value = { classId: active.classId, name: active.name, studentCount: active.studentCount ?? 0 }
     const [groupResult, studentResult] = await Promise.all([
       api.listGroups(classInfo.value.classId),
       api.listStudents(classInfo.value.classId),
     ])
     groups.value = groupResult
     students.value = studentResult.items
+    classInfo.value = { ...classInfo.value, studentCount: studentResult.total }
   } catch (error) {
     classInfo.value = null
     groups.value = []
@@ -76,6 +79,7 @@ async function create(): Promise<void> {
   saving.value = true
   try {
     const result = await api.createAssignment({
+      classId: classInfo.value!.classId,
       title: title.value.trim(),
       type: type.value,
       instructions: instructions.value.trim(),

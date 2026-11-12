@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { api } = vi.hoisted(() => ({
+const { api, getActiveClass } = vi.hoisted(() => ({
   api: {
-    currentClass: vi.fn(),
     listGroups: vi.fn(),
     listStudents: vi.fn(),
     createAssignment: vi.fn(),
   },
+  getActiveClass: vi.fn(),
 }))
 
-vi.mock('../api/client', () => ({ api }))
+vi.mock('../api/client', () => ({ api, getActiveClass }))
 import AssignmentCreateView from './AssignmentCreateView.vue'
 
 const routerStubs = { RouterLink: { template: '<a><slot /></a>' } }
@@ -18,7 +18,7 @@ const routerStubs = { RouterLink: { template: '<a><slot /></a>' } }
 describe('assignment creation form', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    api.currentClass.mockResolvedValue({ classId: 'class-1', name: '三年级一班', studentCount: 24 })
+    getActiveClass.mockReturnValue({ classId: 'class-1', name: '三年级一班', teacherKey: 'teacher-key', studentCount: 24 })
     api.listGroups.mockResolvedValue([])
     api.listStudents.mockResolvedValue({ items: [], total: 24 })
     api.createAssignment.mockResolvedValue({
@@ -52,35 +52,37 @@ describe('assignment creation form', () => {
   })
 
   it('explains an uninitialized class after loading finishes', async () => {
-    api.currentClass.mockResolvedValue(null)
+    getActiveClass.mockReturnValue(null)
     const wrapper = mount(AssignmentCreateView, { global: { stubs: routerStubs } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('先建立班级名单')
+    expect(wrapper.text()).toContain('尚未导入班级')
     expect(wrapper.text()).not.toContain('正在读取班级名单')
     expect(wrapper.find('form').exists()).toBe(false)
   })
 
   it('does not mislabel an API failure as an uninitialized class and offers retry', async () => {
-    api.currentClass.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(null)
+    api.listGroups.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    api.listGroups.mockResolvedValue([])
+    api.listStudents.mockResolvedValue({ items: [], total: 0 })
     const wrapper = mount(AssignmentCreateView, { global: { stubs: routerStubs } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('网络连接失败')
     expect(wrapper.text()).toContain('暂时无法读取班级信息')
-    expect(wrapper.text()).not.toContain('先建立班级名单')
+    expect(wrapper.text()).not.toContain('尚未导入班级')
 
     const retry = wrapper.findAll('button').find((button) => button.text() === '重新读取')
     expect(retry).toBeDefined()
     await retry!.trigger('click')
     await flushPromises()
 
-    expect(api.currentClass).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('先建立班级名单')
+    expect(api.listGroups).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).not.toContain('尚未导入班级')
   })
 
   it('explains and rejects an empty target roster without calling the API', async () => {
-    api.currentClass.mockResolvedValue({ classId: 'class-1', name: '三年级一班', studentCount: 0 })
+    getActiveClass.mockReturnValue({ classId: 'class-1', name: '三年级一班', teacherKey: 'teacher-key', studentCount: 0 })
     api.listGroups.mockResolvedValue([])
     api.listStudents.mockResolvedValue({ items: [], total: 0 })
     const wrapper = mount(AssignmentCreateView, { global: { stubs: routerStubs } })

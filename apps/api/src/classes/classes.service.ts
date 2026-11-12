@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { randomInt } from 'node:crypto'
 import { PrismaService } from '../prisma/prisma.service.js'
+import { hashTeacherKey, isValidTeacherKeyFormat, keyMatchesHash } from '../common/admin-token.js'
 import { partitionIntoGroups } from '../assignments/workflows.js'
-import type { BootstrapDto, CreateGroupDto, ImportStudentsDto } from './classes.dto.js'
+import type { CreateGroupDto, ImportClassDto, ImportStudentsDto, VerifyClassKeyDto } from './classes.dto.js'
 
 function shuffle<T>(values: T[]): T[] {
   const result = [...values]
@@ -26,40 +27,60 @@ function pageValue(value: string | undefined, fallback: number, maximum: number)
 export class ClassesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async bootstrap(input: BootstrapDto) {
-    const existing = await this.prisma.demoState.findUnique({ where: { id: 'demo' }, select: { id: true } })
-    if (existing) throw new ConflictException('This demo already has a class.')
-    const legacyClass = await this.prisma.classroom.findFirst({ select: { id: true } })
-    if (legacyClass) throw new ConflictException('This demo already has a class.')
-    try {
-      return await this.prisma.$transaction(async (transaction) => {
-        const classroom = await transaction.classroom.create({
-          data: { name: input.className.trim() },
-          include: { _count: { select: { students: true } } },
-        })
-        await transaction.demoState.create({ data: { id: 'demo', classId: classroom.id } })
-        return classroom
-      })
-    } catch (error) {
-      if (isUniqueConstraint(error)) throw new ConflictException('This demo already has a class.')
-      throw error
+  /**
+   * 导入班级：支持「建立新班级」与「把已有班级导入当前浏览器」两种语义。
+   * - 班级名不存在 → 用该密钥建立新班级；
+   * - 班级名已存在且密钥匹配 → 视为重复导入，直接返回班级信息（幂等）；
+   * - 班级名已存在但密钥不匹配 → 拒绝；
+   * - 同一密钥不允许绑定到多个班级名。
+   * 历史班级（迁移前创建、teacherKeyHash 为空）在首次导入时认领提交的密钥。
+   */
+  async importClass(input: ImportClassDto) {
+    const className = input.className.trim()
+    const key = input.teacherKey.trim()
+    if (!isValidTeacherKeyFormat(key)) {
+      throw new BadRequestException('班级密钥至少需要 8 个字符。')
     }
+    const hash = hashTeacherKey(key)
+
+    const existing = await this.prisma.classroom.findFirst({
+      where: { name: className },
+      include: { _count: { select: { students: true } } },
+    })
+    if (existing) {
+      if (!existing.teacherKeyHash) {
+        await this.prisma.classroom.update({ where: { id: existing.id }, data: { teacherKeyHash: hash } })
+      } else if (!keyMatchesHash(key, existing.teacherKeyHash)) {
+        throw new ConflictException('该班级已存在，密钥不匹配。')
+      }
+      return { classId: existing.id, name: existing.name, studentCount: existing._count.students }
+    }
+
+    const keyOwner = await this.prisma.classroom.findFirst({
+      where: { teacherKeyHash: hash },
+      select: { name: true },
+    })
+    if (keyOwner) throw new ConflictException('该密钥已被其他班级使用，请更换密钥。')
+
+    const created = await this.prisma.classroom.create({
+      data: { name: className, teacherKeyHash: hash },
+      include: { _count: { select: { students: true } } },
+    })
+    return { classId: created.id, name: created.name, studentCount: created._count.students }
   }
 
-  async current() {
-    const state = await this.prisma.demoState.findUnique({ where: { id: 'demo' }, select: { classId: true } })
-    const classroom = state
-      ? await this.prisma.classroom.findUnique({ where: { id: state.classId }, include: { _count: { select: { students: true } } } })
-      : await this.prisma.classroom.findFirst({
-        orderBy: { createdAt: 'asc' },
-        include: { _count: { select: { students: true } } },
-      })
-    if (!classroom) return null
-    return {
-      classId: classroom.id,
-      name: classroom.name,
-      studentCount: classroom._count.students,
+  /** 用密钥换取班级信息（一个密钥只对应一个班级）。 */
+  async verifyClassKey(input: VerifyClassKeyDto) {
+    const key = input.teacherKey.trim()
+    if (!isValidTeacherKeyFormat(key)) {
+      throw new BadRequestException('班级密钥至少需要 8 个字符。')
     }
+    const classroom = await this.prisma.classroom.findFirst({
+      where: { teacherKeyHash: hashTeacherKey(key) },
+      include: { _count: { select: { students: true } } },
+    })
+    if (!classroom) throw new UnauthorizedException('班级密钥不匹配，没有找到对应的班级。')
+    return { classId: classroom.id, name: classroom.name, studentCount: classroom._count.students }
   }
 
   async listStudents(classId: string, query: { keyword?: string; groupId?: string; page?: string; pageSize?: string }) {

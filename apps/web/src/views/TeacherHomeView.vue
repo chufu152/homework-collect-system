@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, type AssignmentListItem } from '../api/client'
+import { api, type AssignmentListItem, getActiveClass } from '../api/client'
 import { describeError } from '../api/error-messages'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -48,8 +48,15 @@ function subtitle(item: AssignmentListItem): string {
 async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
+  const active = getActiveClass()
+  if (!active) {
+    assignments.value = []
+    errorMessage.value = '尚未导入班级：请先到「班级名单」页填写班级名称与班级密钥完成导入。'
+    loading.value = false
+    return
+  }
   try {
-    const result = await api.listAssignments()
+    const result = await api.listAssignments(active.classId)
     assignments.value = result.items
   } catch (error) {
     errorMessage.value = describeError(error, '作业列表暂时无法读取。')

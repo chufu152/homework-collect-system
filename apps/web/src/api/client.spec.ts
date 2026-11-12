@@ -13,18 +13,19 @@ describe('API client response boundaries', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     sessionStorage.clear()
+    localStorage.clear()
   })
 
   it('keeps a documented data:null envelope distinct from an empty response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ code: 'OK', message: 'ok', data: null, requestId: 'req-1' })))
 
-    await expect(api.currentClass()).resolves.toBeNull()
+    await expect(api.request('/classes/anything')).resolves.toBeNull()
   })
 
   it('rejects a successful JSON response without the data field', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ code: 'OK', message: 'ok', requestId: 'req-2' })))
 
-    await expect(api.currentClass()).rejects.toMatchObject({
+    await expect(api.request('/classes/anything')).rejects.toMatchObject({
       name: 'ApiRequestError',
       code: 'INVALID_ENVELOPE',
       status: 200,
@@ -37,7 +38,7 @@ describe('API client response boundaries', () => {
       headers: { 'content-type': 'application/json' },
     })))
 
-    await expect(api.currentClass()).rejects.toMatchObject({ code: 'INVALID_ENVELOPE', status: 200 })
+    await expect(api.request('/classes/anything')).rejects.toMatchObject({ code: 'INVALID_ENVELOPE', status: 200 })
   })
 
   it('preserves a non-empty binary response as a Blob', async () => {
@@ -73,7 +74,7 @@ describe('API client response boundaries', () => {
       code: 'RATE_LIMITED', message: 'Too many requests.', data: null, requestId: 'req-3',
     }, 429, { 'Retry-After': '17' })))
 
-    await expect(api.currentClass()).rejects.toMatchObject({
+    await expect(api.request('/classes/anything')).rejects.toMatchObject({
       code: 'RATE_LIMITED',
       status: 429,
       retryAfter: 17,
@@ -154,8 +155,11 @@ describe('API client response boundaries', () => {
     expect(download.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
   })
 
-  it('exports a non-empty file with the fallback name and the admin token', async () => {
-    sessionStorage.setItem('hcs.teacher-key', 'key-1')
+  it('exports a non-empty file with the fallback name and the active class token', async () => {
+    localStorage.setItem('hcs.imported-classes', JSON.stringify([
+      { classId: 'class-1', name: '三年级一班', teacherKey: 'key-1' },
+    ]))
+    localStorage.setItem('hcs.active-class', 'class-1')
     const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 0, 1, 0]), {
       status: 200,
       headers: { 'content-type': 'application/zip' },
