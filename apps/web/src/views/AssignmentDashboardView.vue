@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, type AssignmentDashboard, type SubmissionVersion } from '../api/client'
 import { describeError } from '../api/error-messages'
+import { copyToClipboard } from '../utils/clipboard'
 
 const props = defineProps<{ assignmentId: string }>()
 const router = useRouter()
@@ -63,7 +64,7 @@ async function load(): Promise<void> {
 
 async function copyText(text: string, success: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(text)
+    await copyToClipboard(text)
     notice.value = success
   } catch {
     notice.value = '剪贴板不可用，请手动选择并复制。'

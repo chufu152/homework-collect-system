@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, type AssignmentListItem } from '../api/client'
 import { describeError } from '../api/error-messages'
+import { copyToClipboard } from '../utils/clipboard'
 
 type AssignmentType = AssignmentListItem['type']
 const title = ref('')
@@ -98,7 +99,7 @@ async function create(): Promise<void> {
 async function copyLink(): Promise<void> {
   if (!published.value) return
   try {
-    await navigator.clipboard.writeText(published.value.shareUrl)
+    await copyToClipboard(published.value.shareUrl)
     copied.value = true
     window.setTimeout(() => { copied.value = false }, 2400)
   } catch {

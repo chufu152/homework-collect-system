@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, type AssignmentListItem } from '../api/client'
 import { describeError } from '../api/error-messages'
+import { copyToClipboard } from '../utils/clipboard'
 
 const router = useRouter()
 
@@ -65,7 +66,7 @@ async function copyShareLink(event: MouseEvent, url: string): Promise<void> {
   event.preventDefault()
   event.stopPropagation()
   try {
-    await navigator.clipboard.writeText(url)
+    await copyToClipboard(url)
     notice.value = '分享链接已复制。'
   } catch {
     notice.value = '当前浏览器未开放剪贴板，请打开作业后复制链接。'
