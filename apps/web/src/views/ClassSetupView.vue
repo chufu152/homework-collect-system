@@ -6,6 +6,9 @@ import { copyToClipboard } from '../utils/clipboard'
 
 const className = ref('')
 const classKey = ref('')
+const revealKey = ref(false)
+// 最近一次自动生成的密钥及其归属班级；换班级名再导入时据此重新生成，避免旧密钥撞「同钥异名」
+const autoKey = ref<{ key: string; className: string } | null>(null)
 const importedClasses = ref<ImportedClass[]>([])
 const classInfo = ref<{ classId: string; name: string; studentCount: number } | null>(null)
 const rosterText = ref('')
@@ -125,7 +128,8 @@ function generateClassKey(): string {
 
 /**
  * 导入班级：填写班级名称 + 班级密钥 → 建立新班级或幂等导入已有班级；
- * 只填密钥则按密钥找回已导入过的班级；新建班级时密钥留空会自动生成并复制到剪贴板。
+ * 只填密钥则按密钥找回已导入过的班级；新建班级时密钥留空会自动生成、
+ * 回填到输入框（明文显示）并复制到剪贴板。
  * 成功后加入本浏览器保存的班级列表并切换为活动班级。
  */
 async function importClassNow(): Promise<void> {
@@ -138,18 +142,27 @@ async function importClassNow(): Promise<void> {
   }
   savingKey.value = true
   errorMessage.value = ''
-  // 新建班级且未填密钥 → 自动生成，导入成功后自动复制到剪贴板
-  const finalKey = key || (name ? generateClassKey() : '')
+  let finalKey = key
+  let wasAuto = false
+  if (name && (!key || (autoKey.value && key === autoKey.value.key && name !== autoKey.value.className))) {
+    // 新建班级未填密钥，或沿用了上一次自动生成的密钥但换了班级名 → 重新生成并回填
+    finalKey = generateClassKey()
+    wasAuto = true
+    classKey.value = finalKey
+    revealKey.value = true
+  }
   try {
     const info = name
       ? await api.importClass(name, finalKey)
       : await api.verifyClassKey(finalKey)
     addImportedClass({ classId: info.classId, name: info.name, teacherKey: finalKey, studentCount: info.studentCount })
     importedClasses.value = listImportedClasses()
-    classKey.value = ''
-    if (key) {
-      showToast(name ? `班级「${info.name}」已导入。` : `班级「${info.name}」导入成功。`, 'success')
+    if (wasAuto) {
+      autoKey.value = { key: finalKey, className: info.name }
     } else {
+      classKey.value = ''
+    }
+    if (wasAuto) {
       let copied = true
       try {
         await copyToClipboard(finalKey)
@@ -162,6 +175,8 @@ async function importClassNow(): Promise<void> {
           : `班级「${info.name}」已创建，复制失败，请手动保存密钥：${finalKey}`,
         copied ? 'success' : 'danger',
       )
+    } else {
+      showToast(name ? `班级「${info.name}」已导入。` : `班级「${info.name}」导入成功。`, 'success')
     }
     await loadClass()
   } catch (error) {
@@ -383,7 +398,7 @@ onBeforeUnmount(() => {
 
         <form class="teacher-key-form" @submit.prevent="importClassNow">
           <input v-model="className" aria-label="班级名称" placeholder="班级名称（新名称将建立新班级）" maxlength="80" />
-          <input v-model="classKey" type="password" autocomplete="current-password" aria-label="班级密钥" placeholder="班级密钥（新建班级可留空，自动生成）" />
+          <input v-model="classKey" :type="revealKey ? 'text' : 'password'" autocomplete="current-password" aria-label="班级密钥" placeholder="班级密钥（新建班级可留空，自动生成）" />
           <button class="button secondary" type="submit" :disabled="savingKey || busy">导入班级</button>
         </form>
         <p v-if="errorMessage" class="field-message error-text" role="alert">{{ errorMessage }}</p>
