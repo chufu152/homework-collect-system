@@ -60,9 +60,18 @@ function todayISO(): string {
 
 function onFileChange(event: Event): void {
   const target = event.target as HTMLInputElement
-  selectedFiles.value = Array.from(target.files ?? [])
-  // 假条：新选择的文件默认填今天的日期。
-  slipDates.value = selectedFiles.value.map((_, index) => slipDates.value[index] ?? todayISO())
+  const picked = Array.from(target.files ?? [])
+  // 假条：多次选择是「追加」而不是「替换」，方便分多次挑选假条；
+  // 按 文件名+大小 去重，避免重复添加同一张。选择后清空 input，才能再次选中同一个文件。
+  if (assignment.value?.type === 'leave') {
+    const existingKeys = new Set(selectedFiles.value.map((file) => `${file.name}-${file.size}`))
+    const additions = picked.filter((file) => !existingKeys.has(`${file.name}-${file.size}`))
+    selectedFiles.value = [...selectedFiles.value, ...additions].slice(0, maxFileCount.value)
+    slipDates.value = selectedFiles.value.map((_, index) => slipDates.value[index] ?? todayISO())
+  } else {
+    selectedFiles.value = picked
+  }
+  target.value = ''
 }
 
 function removeSlipFile(index: number): void {
