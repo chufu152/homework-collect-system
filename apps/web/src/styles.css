@@ -341,16 +341,16 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
 .form-sheet-input { width: 100%; min-width: 0; min-height: 46px; padding: 8px 12px; border: 0; background: #fff; font-size: 14px; }
 .form-sheet-input:focus { outline: 2px solid var(--sea); outline-offset: -2px; }
 
-/* 学号/姓名：输入 + 右侧下拉按钮；候选面板浮层显示，点击外部自动收起。 */
+/* 学号/姓名：输入框右缘内嵌下三角；候选面板宽度随内容自适应，一行放下不换行。 */
 .form-cell { position: relative; display: flex; align-items: stretch; background: #fff; min-width: 0; }
-.form-cell .form-sheet-input { flex: 1; }
-.form-dd-toggle { flex: 0 0 auto; width: 38px; border: 0; border-left: 1px solid var(--line); background: #eef4ef; color: #57707a; font-size: 10px; cursor: pointer; }
-.form-dd-toggle:hover { background: #e2ece2; }
-.form-dd-list { position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 40; max-height: 228px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(31, 48, 44, .16); }
-.form-dd-list button { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: none; text-align: left; font-size: 13.5px; cursor: pointer; }
+.form-cell .form-sheet-input { flex: 1; padding-right: 30px; }
+.form-dd-toggle { position: absolute; top: 0; right: 0; bottom: 0; width: 28px; display: flex; align-items: center; justify-content: center; border: 0; background: transparent; color: #57707a; font-size: 9px; line-height: 1; cursor: pointer; }
+.form-dd-toggle:hover { color: #34494d; }
+.form-dd-list { position: absolute; top: calc(100% + 3px); left: 0; min-width: 100%; width: max-content; max-width: min(420px, calc(100vw - 48px)); z-index: 40; max-height: 228px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(31, 48, 44, .16); }
+.form-dd-list button { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: none; text-align: left; font-size: 13.5px; white-space: nowrap; cursor: pointer; }
 .form-dd-list button:hover { background: #eef4ef; }
-.form-dd-list strong { color: #22343a; font-weight: 600; overflow-wrap: anywhere; }
-.form-dd-list span { color: var(--muted); font-size: 12px; text-align: right; }
+.form-dd-list strong { color: #22343a; font-weight: 600; }
+.form-dd-list span { color: var(--muted); font-size: 12px; }
 .form-dd-empty { padding: 9px 10px; color: var(--muted); font-size: 12.5px; }
 
 /* 文件字段 */

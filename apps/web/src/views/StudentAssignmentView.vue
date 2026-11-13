@@ -474,7 +474,7 @@ onMounted(load)
                   :placeholder="field.required ? '必填，可下拉选择' : '可下拉选择'"
                   @focus="openDropdown = field.name"
                 />
-                <button class="form-dd-toggle" type="button" tabindex="-1" :aria-label="`下拉选择${field.name}`" @click="toggleDropdown(field.name)">▼</button>
+                <button class="form-dd-toggle" type="button" tabindex="-1" :aria-label="`下拉选择${field.name}`" @click="toggleDropdown(field.name)">▾</button>
                 <ul v-if="openDropdown === field.name" class="form-dd-list" role="listbox" :aria-label="`${field.name}候选`">
                   <li v-if="!dropdownOptions(field).length" class="form-dd-empty">没有匹配的选项</li>
                   <li v-for="option in dropdownOptions(field)" :key="option.studentNo">
