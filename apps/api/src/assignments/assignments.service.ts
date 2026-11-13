@@ -7,8 +7,9 @@ import { PrismaService } from '../prisma/prisma.service.js'
 import { formatSafeFolderName, getSubmissionStatus, resolveStudent } from './assignment-policy.js'
 import { ExportsService } from '../exports/exports.service.js'
 import { calculateDashboard, resolveTargetStudents, validateSubmissionAccess } from './workflows.js'
-import type { AssignmentStateDto, CreateAssignmentDto, FeedbackDto, RelayEntryDto, StudentLookupDto } from './assignments.dto.js'
+import type { AssignmentStateDto, CreateAssignmentDto, FeedbackDto, FormSubmissionDto, RelayEntryDto, StudentLookupDto } from './assignments.dto.js'
 import { StorageService } from '../storage/storage.service.js'
+import { assertPrimaryKeyAvailable, deleteFormFiles, findFormRecord, loadFormConfig, readFormRecords, saveFormConfig, sortFormRecords, upsertFormRecord, validateFormConfig, validateFormValues, type FormConfig, type FormRecord } from './form-store.js'
 import type { DownloadResult } from '../common/file-response.js'
 import { safeDownloadName, validateUploadContent } from '../storage/storage-policy.js'
 
@@ -128,6 +129,23 @@ export class AssignmentsService {
     if (allowedTypes.some((type) => !(FILE_TYPES as readonly string[]).includes(type))) {
       throw new BadRequestException('One or more file types are not supported.')
     }
+    // 表单作业：校验并规范化字段配置（字段/主键/排序）。
+    let formConfig: FormConfig | null = null
+    if (input.type === 'form') {
+      const candidate: FormConfig = {
+        fields: (input.formConfig?.fields ?? []).map((field) => ({
+          name: field.name,
+          type: field.type ?? 'text',
+          required: field.required ?? false,
+        })),
+        primaryKey: input.formConfig?.primaryKey ?? '',
+        sortField: input.formConfig?.sortField?.trim() || null,
+        sortDir: input.formConfig?.sortDir ?? 'asc',
+      }
+      const invalid = validateFormConfig(candidate)
+      if (invalid) throw new BadRequestException(invalid)
+      formConfig = candidate
+    }
     const publishNow = input.publishNow === true
     const assignment = await this.prisma.assignment.create({
       data: {
@@ -147,6 +165,15 @@ export class AssignmentsService {
       },
       include: { _count: { select: { targets: true } } },
     })
+    // 配置以 JSON 文本文件保存；创建失败则不留孤儿文件。
+    if (formConfig) {
+      try {
+        await saveFormConfig(this.storage, assignment.id, formConfig)
+      } catch (error) {
+        await this.prisma.assignment.delete({ where: { id: assignment.id } }).catch(() => undefined)
+        throw error
+      }
+    }
     return {
       id: assignment.id,
       title: assignment.title,
@@ -193,12 +220,14 @@ export class AssignmentsService {
     await this.prisma.assignment.delete({ where: { id: assignmentId } })
     const results = await Promise.allSettled(files.map((file) => this.storage.remove(file.storageKey)))
     const failedFiles = results.filter((result) => result.status === 'rejected').length
+    // 表单作业的字段配置与数据文本文件一并清理。
+    await deleteFormFiles(this.storage, assignmentId)
     return { removed: true, removedFiles: files.length - failedFiles }
   }
 
   async publicDetails(shareCode: string) {
     const assignment = await this.publicAssignment(shareCode)
-    return {
+    const base = {
       id: assignment.id,
       title: assignment.title,
       type: assignment.type,
@@ -209,6 +238,87 @@ export class AssignmentsService {
       maxFileCount: assignment.maxFileCount,
       maxFileSizeMB: Math.floor(assignment.maxFileBytes / 1024 / 1024),
       state: assignment.state,
+    }
+    if (assignment.type === 'form') {
+      const form = await loadFormConfig(this.storage, assignment.id)
+      return { ...base, form }
+    }
+    return base
+  }
+
+  /** 表单作业：学生读取自己已提交的记录用于回显。 */
+  async formRecord(shareCode: string, input: StudentLookupDto) {
+    const assignment = await this.publicAssignment(shareCode)
+    if (assignment.type !== 'form') throw new BadRequestException('This assignment is not a form.')
+    const roster = await this.prisma.student.findMany({
+      where: { id: { in: assignment.targets.map((target) => target.studentId) } },
+      select: { id: true, studentNo: true, name: true },
+    })
+    const student = requireNameMatch(roster, input)
+    const config = await loadFormConfig(this.storage, assignment.id)
+    if (!config) throw new NotFoundException('Form config is missing.')
+    const record = await findFormRecord(this.storage, assignment.id, config, student.studentNo)
+    return { record }
+  }
+
+  /** 表单作业：首次提交追加写入数据文本文件，重复提交原地改写自己的行。 */
+  async submitForm(shareCode: string, input: FormSubmissionDto) {
+    const assignment = await this.publicAssignment(shareCode)
+    if (assignment.type !== 'form') throw new BadRequestException('This assignment is not a form.')
+    const config = await loadFormConfig(this.storage, assignment.id)
+    if (!config) throw new NotFoundException('Form config is missing.')
+    const roster = await this.prisma.student.findMany({
+      where: { id: { in: assignment.targets.map((target) => target.studentId) } },
+      select: { id: true, studentNo: true, name: true },
+    })
+    const student = requireNameMatch(roster, input)
+    const access = validateSubmissionAccess(assignment.state, assignment.targets.map((target) => target.studentId), student.id)
+    if (access === 'not-targeted') throw new BadRequestException('This student is not included in the assignment audience.')
+    if (access !== 'allowed') throw new ConflictException('This assignment is not accepting submissions.')
+
+    const values = validateFormValues(config, input.values)
+    if (typeof values === 'string') throw new BadRequestException(values)
+    const record: FormRecord = { studentNo: student.studentNo, name: student.name, values }
+
+    // 主键唯一性：其他学生已占用相同主键值时拒绝。
+    try {
+      await assertPrimaryKeyAvailable(this.storage, assignment.id, config, record)
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('主键')) throw new ConflictException(error.message)
+      throw error
+    }
+
+    const isUpdate = await upsertFormRecord(this.storage, assignment.id, config, record)
+    const now = new Date()
+    const current = await this.prisma.submission.findUnique({
+      where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: student.id } },
+      select: { id: true, version: true, receiptCode: true },
+    })
+    const receiptCode = current?.receiptCode ?? randomBytes(24).toString('base64url')
+    // Submission 行用于进度统计与回执；内容快照存 textContent 便于后台查看。
+    const submission = await this.prisma.submission.upsert({
+      where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: student.id } },
+      create: {
+        assignmentId: assignment.id,
+        studentId: student.id,
+        receiptCode,
+        textContent: JSON.stringify(values),
+        submittedAt: now,
+        version: 1,
+      },
+      update: {
+        textContent: JSON.stringify(values),
+        submittedAt: now,
+        version: { increment: 1 },
+      },
+    })
+    return {
+      submissionId: submission.id,
+      receiptCode: submission.receiptCode,
+      version: submission.version,
+      submittedAt: submission.submittedAt,
+      updated: isUpdate,
+      record,
     }
   }
 
@@ -361,7 +471,7 @@ export class AssignmentsService {
     const items = targets.map((student) => {
       const submission = submissions.get(student.id)
       const onlineStatus = getSubmissionStatus(submission?.submittedAt ?? null, assignment.dueAt)
-      const countsAsOnline = assignment.type === 'online' || assignment.type === 'leave'
+      const countsAsOnline = assignment.type === 'online' || assignment.type === 'leave' || assignment.type === 'form'
       const status = countsAsOnline ? onlineStatus
         : assignment.type === 'offline' ? completions.has(student.id) ? 'completed' : 'missing'
           : assignment.type === 'checkin' ? checkedIn.has(student.id) ? 'checked_in' : 'missing'
@@ -381,7 +491,7 @@ export class AssignmentsService {
     })
     const completedCount = items.filter((item) => item.status !== 'missing').length
     const missingNames = items.filter((item) => item.status === 'missing').map((item) => item.name)
-    return {
+    const base = {
       assignment: {
         id: assignment.id,
         title: assignment.title,
@@ -392,13 +502,19 @@ export class AssignmentsService {
       },
       summary: {
         expected: targets.length,
-        submitted: assignment.type === 'online' || assignment.type === 'leave' ? summary.submitted : completedCount,
-        missing: assignment.type === 'online' || assignment.type === 'leave' ? summary.missing : items.filter((item) => item.status === 'missing').length,
-        late: assignment.type === 'online' || assignment.type === 'leave' ? summary.late : 0,
+        submitted: assignment.type === 'online' || assignment.type === 'leave' || assignment.type === 'form' ? summary.submitted : completedCount,
+        missing: assignment.type === 'online' || assignment.type === 'leave' || assignment.type === 'form' ? summary.missing : items.filter((item) => item.status === 'missing').length,
+        late: assignment.type === 'online' || assignment.type === 'leave' || assignment.type === 'form' ? summary.late : 0,
       },
       items,
       missingMentionText: formatMissingMentions(missingNames),
     }
+    if (assignment.type === 'form') {
+      const form = await loadFormConfig(this.storage, assignment.id)
+      const records = form ? sortFormRecords(form, await readFormRecords(this.storage, assignment.id, form)) : []
+      return { ...base, form, records }
+    }
+    return base
   }
 
   async feedback(submissionId: string, input: FeedbackDto) {
@@ -620,6 +736,29 @@ export class AssignmentsService {
       return `"${safe.replace(/"/g, '""')}"`
     }).join(',')).join('\r\n')
     return { filename: `${this.fileBase(dashboard.assignment.title)}.csv`, content: Buffer.from(`\ufeff${csv}`, 'utf8') }
+  }
+
+  /** 表单作业：读取数据文本文件全部记录，一键导出 Excel（.xlsx）。 */
+  async exportFormXlsx(assignmentId: string): Promise<{ filename: string; content: Buffer }> {
+    const assignment = await this.prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      select: { id: true, title: true, type: true },
+    })
+    if (!assignment) throw new NotFoundException('Assignment not found.')
+    if (assignment.type !== 'form') throw new BadRequestException('Only form assignments support XLSX export.')
+    const config = await loadFormConfig(this.storage, assignment.id)
+    if (!config) throw new NotFoundException('Form config is missing.')
+    const records = sortFormRecords(config, await readFormRecords(this.storage, assignment.id, config))
+    const rows = [
+      ['学号', '姓名', ...config.fields.map((field) => field.name)],
+      ...records.map((record) => [
+        record.studentNo,
+        record.name,
+        ...config.fields.map((field) => record.values[field.name] ?? ''),
+      ]),
+    ]
+    const { createXlsx } = await import('../exports/xlsx-archive.js')
+    return { filename: `${this.fileBase(assignment.title)}.xlsx`, content: createXlsx(rows) }
   }
 
   async exportDocx(assignmentId: string, submissionId?: string): Promise<{ filename: string; content: Buffer }> {

@@ -311,6 +311,10 @@ export const api = {
     if (payload.fileDates?.length) form.set('fileDates', JSON.stringify(payload.fileDates))
     return request<{ submissionId: string; receiptCode: string; version: number; submittedAt: string; files: Array<{ id: string }> }>(`/public/assignments/${encodeURIComponent(shareCode)}/submissions`, { method: 'POST', body: form })
   },
+  /** 表单作业：读取自己已提交的记录用于回显。 */
+  getFormRecord: (shareCode: string, payload: { studentNo?: string; studentName: string }) => request<{ record: FormRecord | null }>(`/public/assignments/${encodeURIComponent(shareCode)}/form-record`, { method: 'POST', body: JSON.stringify(payload) }),
+  /** 表单作业：提交/更新自己的表单记录。 */
+  submitForm: (shareCode: string, payload: { studentNo?: string; studentName: string; values: Record<string, string> }) => request<{ receiptCode: string; version: number; updated: boolean; submittedAt: string }>(`/public/assignments/${encodeURIComponent(shareCode)}/form-submissions`, { method: 'POST', body: JSON.stringify(payload) }),
   checkIn: (shareCode: string, payload: { studentNo?: string; studentName?: string }) => request<{ displayName: string; checkedInAt: string; alreadyCheckedIn: boolean }>(`/public/assignments/${encodeURIComponent(shareCode)}/check-ins`, { method: 'POST', body: JSON.stringify(payload) }),
   getRelayEntries: async (shareCode: string) => {
     const result = await request<unknown>(`/public/assignments/${encodeURIComponent(shareCode)}/relay-entries`)
@@ -334,7 +338,7 @@ export const api = {
     const response = await fetch(`${API_PREFIX}/public/files/${encodeURIComponent(fileId)}/download?receiptCode=${encodeURIComponent(receiptCode)}`)
     await consumeDownload(response, '作业附件')
   },
-  exportFile: async (assignmentId: string, format: 'csv' | 'zip' | 'docx', submissionId?: string) => {
+  exportFile: async (assignmentId: string, format: 'csv' | 'zip' | 'docx' | 'xlsx', submissionId?: string) => {
     const token = getAdminToken()
     const query = new URLSearchParams({ format })
     if (submissionId) query.set('submissionId', submissionId)
@@ -344,10 +348,29 @@ export const api = {
   },
 }
 
+export interface FormFieldConfig {
+  name: string
+  type: 'text' | 'number' | 'date'
+  required: boolean
+}
+
+export interface FormConfigPayload {
+  fields: FormFieldConfig[]
+  primaryKey: string
+  sortField: string | null
+  sortDir: 'asc' | 'desc'
+}
+
+export interface FormRecord {
+  studentNo: string
+  name: string
+  values: Record<string, string>
+}
+
 export interface AssignmentListItem {
   id: string
   title: string
-  type: 'online' | 'offline' | 'checkin' | 'relay' | 'leave'
+  type: 'online' | 'offline' | 'checkin' | 'relay' | 'leave' | 'form'
   state: 'draft' | 'published' | 'closed'
   dueAt: string | null
   expectedCount: number
@@ -360,6 +383,9 @@ export interface AssignmentDashboard {
   assignment: { id: string; title: string; type: AssignmentListItem['type']; state: AssignmentListItem['state']; dueAt: string | null; shareUrl: string }
   summary: { expected: number; submitted: number; missing: number; late: number }
   missingMentionText: string
+  /** 表单作业专用：字段配置与数据文件里的全部记录。 */
+  form?: FormConfigPayload | null
+  records?: FormRecord[]
   items: Array<{
     studentId: string
     studentNo: string
@@ -385,6 +411,8 @@ export interface PublicAssignment {
   maxFileCount: number
   maxFileSizeMB: number
   state: string
+  /** 表单作业专用：字段配置。 */
+  form?: FormConfigPayload | null
 }
 
 export interface SubmissionVersionFile {

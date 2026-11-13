@@ -22,6 +22,15 @@ const receiptCode = ref('')
 const showForm = ref(true)
 const fileInput = ref<HTMLInputElement | null>(null)
 const latestVersion = ref(0)
+// ---- 表单作业：按字段配置填写，读取已有记录回显，重复提交原地更新 ----
+const formValues = ref<Record<string, string>>({})
+const formRecordLoaded = ref(false)
+
+const formFields = computed(() => assignment.value?.form?.fields ?? [])
+
+function resetFormValues(): void {
+  formValues.value = Object.fromEntries(formFields.value.map((field) => [field.name, '']))
+}
 
 const fileAccept = computed(() => (assignment.value?.allowedFileTypes ?? []).map((type) => `.${type}`).join(','))
 const maxFileCount = computed(() => Number.isFinite(assignment.value?.maxFileCount) ? assignment.value!.maxFileCount : 5)
@@ -33,6 +42,7 @@ async function load(): Promise<void> {
   try {
     assignment.value = await api.getPublicAssignment(props.shareCode)
     if (assignment.value.type === 'relay') await refreshRelay()
+    if (assignment.value.type === 'form') resetFormValues()
   } catch (error) {
     errorMessage.value = describeError(error, '无法读取这项作业。')
   } finally {
@@ -150,6 +160,48 @@ function resubmit(): void {
   errorMessage.value = ''
 }
 
+/** 表单作业：按姓名读取自己在数据文件里的已有记录并回显。 */
+async function loadMyFormRecord(): Promise<void> {
+  const name = studentName.value.trim()
+  if (!name) {
+    errorMessage.value = '请先填写姓名，再读取已有记录。'
+    return
+  }
+  await perform(async () => {
+    const result = await api.getFormRecord(props.shareCode, { studentName: name })
+    if (result.record) {
+      formValues.value = Object.fromEntries(formFields.value.map((field) => [field.name, result.record!.values[field.name] ?? '']))
+      formRecordLoaded.value = true
+      confirmation.value = `已读取 ${result.record.name} 的已有填写记录，修改后再次提交即可更新。`
+    } else {
+      resetFormValues()
+      formRecordLoaded.value = true
+      confirmation.value = '没有查到你的已有记录，当前是首次填写。'
+    }
+  })
+}
+
+/** 表单作业：首次提交追加一行，重复提交更新自己的行。 */
+async function submitFormSheet(): Promise<void> {
+  if (!assignment.value) return
+  const missing = formFields.value.find((field) => field.required && !String(formValues.value[field.name] ?? '').trim())
+  if (missing) {
+    errorMessage.value = `请填写「${missing.name}」。`
+    return
+  }
+  await perform(async () => {
+    const result = await api.submitForm(props.shareCode, {
+      studentName: studentName.value.trim(),
+      // 数字/日期输入框的 v-model 可能给出 number，统一转成字符串。
+      values: Object.fromEntries(formFields.value.map((field) => [field.name, String(formValues.value[field.name] ?? '')])),
+    })
+    receiptCode.value = result.receiptCode
+    latestVersion.value = result.version
+    showForm.value = false
+    confirmation.value = result.updated ? '提交成功，你之前填写的记录已更新。' : '提交成功，已记录你的一行数据。'
+  })
+}
+
 async function perform(action: () => Promise<void>, conflictHint?: string): Promise<void> {
   sending.value = true
   errorMessage.value = ''
@@ -193,7 +245,7 @@ onMounted(load)
 
     <article v-else-if="assignment" class="student-paper">
       <header class="student-paper-head">
-        <p class="eyebrow">{{ assignment.type === 'checkin' ? '班级签到' : assignment.type === 'relay' ? '班级接龙' : assignment.type === 'leave' ? '请假条' : assignment.type === 'offline' ? '线下完成登记' : '线上作业' }}</p>
+        <p class="eyebrow">{{ assignment.type === 'checkin' ? '班级签到' : assignment.type === 'relay' ? '班级接龙' : assignment.type === 'leave' ? '请假条' : assignment.type === 'form' ? '信息收集表' : assignment.type === 'offline' ? '线下完成登记' : '线上作业' }}</p>
         <h1>{{ assignment.title }}</h1>
         <p class="assignment-meta">{{ dueLabel(assignment.dueAt) }}</p>
         <p v-if="assignment.instructions" class="assignment-instructions">{{ assignment.instructions }}</p>
@@ -275,6 +327,50 @@ onMounted(load)
           <li v-if="!relayEntries.length && !relayError" class="empty-row">还没有同学加入，从你开始。</li>
         </ol>
         <p v-if="relayError" class="form-message error-text" role="alert">{{ relayError }} <button class="button quiet" type="button" @click="refreshRelay">重试读取名单</button></p>
+      </section>
+
+      <section v-if="assignment.type === 'form'" class="student-paper-body">
+        <form v-if="showForm" @submit.prevent="submitFormSheet">
+          <label class="field-block">
+            <span>姓名</span>
+            <div class="form-identity-row">
+              <input v-model="studentName" aria-label="姓名" name="studentName" autocomplete="name" placeholder="请输入姓名" required />
+              <button class="button secondary" type="button" :disabled="sending" @click="loadMyFormRecord">{{ formRecordLoaded ? '重新读取记录' : '读取我的记录' }}</button>
+            </div>
+            <small>系统会按班级名单自动匹配你的学号；重复提交只会更新你自己那一行。</small>
+          </label>
+
+          <div v-if="formFields.length" class="form-sheet" :style="{ '--form-cols': formFields.length }">
+            <template v-for="field in formFields" :key="field.name">
+              <label class="form-sheet-label" :for="`form-field-${field.name}`">{{ field.name }}<em v-if="field.required" class="form-required" aria-hidden="true">*</em></label>
+              <input
+                :id="`form-field-${field.name}`"
+                v-model="formValues[field.name]"
+                class="form-sheet-input"
+                :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'"
+                :step="field.type === 'number' ? 'any' : undefined"
+                :aria-label="field.name"
+                :placeholder="field.required ? '必填' : ''"
+              />
+            </template>
+          </div>
+          <p v-else class="field-note">表单字段配置缺失，请联系老师。</p>
+
+          <p v-if="errorMessage" class="form-message error-text" role="alert">{{ errorMessage }}</p>
+          <p v-if="confirmation" class="form-message success-text" role="status">{{ confirmation }}</p>
+          <div class="form-actions">
+            <button class="button primary" type="submit" :disabled="sending">{{ sending ? '正在提交…' : '提交表单' }}</button>
+            <RouterLink v-if="receiptCode" class="button secondary" :to="`/receipt/${receiptCode}`">查看提交回执</RouterLink>
+          </div>
+        </form>
+        <div v-else class="receipt-link-block" role="status">
+          <p class="success-text">{{ confirmation }}</p>
+          <p class="muted-copy">重复提交会更新你在表格中的同一行，不会产生重复记录。</p>
+          <div class="form-actions">
+            <RouterLink class="button primary" :to="`/receipt/${receiptCode}`">查看提交回执</RouterLink>
+            <button class="button secondary" type="button" @click="resubmit">再次修改</button>
+          </div>
+        </div>
       </section>
 
       <section v-if="assignment.type === 'offline'" class="student-paper-body">

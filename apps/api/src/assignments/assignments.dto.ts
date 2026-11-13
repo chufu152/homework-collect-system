@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer'
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, Length, Max, MaxLength, Min, ValidateNested } from 'class-validator'
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Max, MaxLength, Min, ValidateNested } from 'class-validator'
 
 export class AssignmentTargetDto {
   @IsIn(['all', 'groups', 'students'])
@@ -16,6 +16,42 @@ export class AssignmentTargetDto {
   studentIds?: string[]
 }
 
+export class FormFieldDto {
+  @IsString()
+  @Length(1, 40)
+  name!: string
+
+  @IsOptional()
+  @IsIn(['text', 'number', 'date'])
+  type?: 'text' | 'number' | 'date'
+
+  @IsOptional()
+  @IsBoolean()
+  required?: boolean
+}
+
+/** 表单作业的字段配置（Access 式建表：字段 + 主键 + 排序依据）。 */
+export class FormConfigDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(30)
+  @ValidateNested({ each: true })
+  @Type(() => FormFieldDto)
+  fields!: FormFieldDto[]
+
+  @IsString()
+  @Length(1, 40)
+  primaryKey!: string
+
+  @IsOptional()
+  @IsString()
+  sortField?: string | null
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDir?: 'asc' | 'desc'
+}
+
 export class CreateAssignmentDto {
   /** 作业归属班级；AdminGuard 会校验请求密钥是否属于该班级。 */
   @IsString()
@@ -26,8 +62,14 @@ export class CreateAssignmentDto {
   @Length(1, 120)
   title!: string
 
-  @IsIn(['online', 'offline', 'checkin', 'relay', 'leave'])
-  type!: 'online' | 'offline' | 'checkin' | 'relay' | 'leave'
+  @IsIn(['online', 'offline', 'checkin', 'relay', 'leave', 'form'])
+  type!: 'online' | 'offline' | 'checkin' | 'relay' | 'leave' | 'form'
+
+  /** 表单作业专用：字段配置（保存为 JSON 文本文件）。 */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FormConfigDto)
+  formConfig?: FormConfigDto
 
   @IsOptional()
   @IsString()
@@ -105,6 +147,12 @@ export class RelayEntryDto extends StudentLookupDto {
   @IsString()
   @MaxLength(1000)
   content?: string
+}
+
+export class FormSubmissionDto extends StudentLookupDto {
+  /** 字段名到填写值的映射；服务端按字段配置逐项校验。 */
+  @IsObject()
+  values!: Record<string, string>
 }
 
 /**

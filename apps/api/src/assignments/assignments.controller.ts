@@ -1,10 +1,10 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common'
 import { AnyFilesInterceptor } from '@nestjs/platform-express/multer/interceptors/any-files.interceptor'
 import type { Express, Response } from 'express'
 import { AdminGuard } from '../common/admin.guard.js'
 import { isRedirectDownload, sendDownload, sendRedirectPayload } from '../common/file-response.js'
 import { AssignmentsService } from './assignments.service.js'
-import { AssignmentStateDto, CompletionDto, CreateAssignmentDto, FeedbackDto, RelayEntryDto, StudentLookupDto, SubmitDto } from './assignments.dto.js'
+import { AssignmentStateDto, CompletionDto, CreateAssignmentDto, FeedbackDto, FormSubmissionDto, RelayEntryDto, StudentLookupDto, SubmitDto } from './assignments.dto.js'
 
 @Controller()
 @UseGuards(AdminGuard)
@@ -86,14 +86,16 @@ export class AssignmentsController {
     const file = format === 'csv' ? await this.assignments.exportCsv(assignmentId)
       : format === 'docx' ? await this.assignments.exportDocx(assignmentId, submissionId)
         : format === 'zip' ? await this.assignments.exportZip(assignmentId)
-          : null
+          : format === 'xlsx' ? await this.assignments.exportFormXlsx(assignmentId)
+            : null
     if (!file) {
-      response.status(400).json({ code: 'BAD_REQUEST', message: 'format must be csv, zip, or docx.', details: [], requestId: response.getHeader('X-Request-Id') ?? '' })
+      response.status(400).json({ code: 'BAD_REQUEST', message: 'format must be csv, zip, docx, or xlsx.', details: [], requestId: response.getHeader('X-Request-Id') ?? '' })
       return
     }
     const contentType = format === 'csv' ? 'text/csv; charset=utf-8'
       : format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/zip'
+        : format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'application/zip'
     sendDownload(response, { content: file.content, contentType, downloadName: file.filename, sizeBytes: file.content.byteLength })
   }
 }
@@ -120,6 +122,18 @@ export class PublicAssignmentsController {
     @UploadedFiles() files: Express.Multer.File[] = [],
   ) {
     return this.assignments.submit(shareCode, input, files ?? [])
+  }
+
+  /** 表单作业：读取自己已提交的记录（用于回显修改）。 */
+  @Post(':shareCode/form-record')
+  formRecord(@Param('shareCode') shareCode: string, @Body(new ValidationPipe({ whitelist: true, transform: true })) input: StudentLookupDto) {
+    return this.assignments.formRecord(shareCode, input)
+  }
+
+  /** 表单作业：首次提交追加写入数据文件，重复提交原地改写。 */
+  @Post(':shareCode/form-submissions')
+  submitForm(@Param('shareCode') shareCode: string, @Body(new ValidationPipe({ whitelist: true, transform: true })) input: FormSubmissionDto) {
+    return this.assignments.submitForm(shareCode, input)
   }
 
   @Post(':shareCode/check-ins')

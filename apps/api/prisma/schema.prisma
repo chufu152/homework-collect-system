@@ -13,6 +13,7 @@ enum AssignmentType {
   checkin
   relay
   leave
+  form
 }
 
 enum AssignmentState {

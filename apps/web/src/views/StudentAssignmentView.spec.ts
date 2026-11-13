@@ -8,6 +8,8 @@ const { api } = vi.hoisted(() => ({
     getRelayEntries: vi.fn(),
     joinRelay: vi.fn(),
     submitAssignment: vi.fn(),
+    getFormRecord: vi.fn(),
+    submitForm: vi.fn(),
   },
 }))
 
@@ -297,4 +299,72 @@ describe('student assignment check-in', () => {
     expect(wrapper.text()).toContain('班级里有多位同名同学')
     expect(wrapper.text()).not.toContain('More than one student')
   })
+it('renders the form sheet and submits one row for a first-time form fill', async () => {
+    api.getPublicAssignment.mockResolvedValue({
+      id: 'assignment-9',
+      title: '体温登记',
+      type: 'form',
+      instructions: '',
+      state: 'published',
+      form: {
+        fields: [
+          { name: '体温', type: 'number', required: true },
+          { name: '症状', type: 'text', required: false },
+        ],
+        primaryKey: '体温',
+        sortField: null,
+        sortDir: 'asc',
+      },
+    })
+    api.getFormRecord.mockResolvedValue({ record: null })
+    api.submitForm.mockResolvedValue({ receiptCode: 'r-1', version: 1, updated: false, submittedAt: '2026-11-13T05:00:00.000Z' })
+    const wrapper = mount(StudentAssignmentView, {
+      props: { shareCode: 'share-code' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('信息收集表')
+    const sheet = wrapper.get('.form-sheet')
+    expect(sheet.findAll('.form-sheet-label').map((node) => node.text())).toEqual(['体温*', '症状'])
+    await wrapper.get('[aria-label="姓名"]').setValue('张三')
+    await sheet.get('#form-field-体温').setValue('36.5')
+    await sheet.get('#form-field-症状').setValue('无')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.submitForm).toHaveBeenCalledWith('share-code', {
+      studentName: '张三',
+      values: { 体温: '36.5', 症状: '无' },
+    })
+    expect(wrapper.text()).toContain('提交成功，已记录你的一行数据')
+  })
+
+  it('blocks the submit when a required form field is empty', async () => {
+    api.getPublicAssignment.mockResolvedValue({
+      id: 'assignment-9',
+      title: '体温登记',
+      type: 'form',
+      instructions: '',
+      state: 'published',
+      form: {
+        fields: [{ name: '体温', type: 'number', required: true }],
+        primaryKey: '体温',
+        sortField: null,
+        sortDir: 'asc',
+      },
+    })
+    api.getFormRecord.mockResolvedValue({ record: null })
+    const wrapper = mount(StudentAssignmentView, {
+      props: { shareCode: 'share-code' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    await wrapper.get('[aria-label="姓名"]').setValue('张三')
+    await wrapper.get('form').trigger('submit')
+    expect(api.submitForm).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请填写「体温」')
+  })
 })
+

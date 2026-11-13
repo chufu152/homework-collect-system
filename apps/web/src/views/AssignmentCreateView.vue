@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api, type AssignmentListItem, getActiveClass } from '../api/client'
+import { api, type AssignmentListItem, type FormFieldConfig, getActiveClass } from '../api/client'
 import { describeError } from '../api/error-messages'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -24,6 +24,51 @@ const errorMessage = ref('')
 const published = ref<AssignmentListItem | null>(null)
 const copied = ref(false)
 
+// ---- 表单作业：Access 式字段设计器 ----
+interface FormDesignerField extends FormFieldConfig {
+  key: number
+}
+let fieldKeySeed = 0
+const formFields = ref<FormDesignerField[]>([
+  { key: ++fieldKeySeed, name: '日期', type: 'date', required: true },
+  { key: ++fieldKeySeed, name: '说明', type: 'text', required: false },
+])
+const formPrimaryKey = ref('日期')
+const formSortField = ref('日期')
+const formSortDir = ref<'asc' | 'desc'>('asc')
+
+const formFieldNames = computed(() => formFields.value.map((field) => field.name.trim()).filter(Boolean))
+
+function addFormField(): void {
+  if (formFields.value.length >= 30) return
+  formFields.value.push({ key: ++fieldKeySeed, name: '', type: 'text', required: false })
+}
+
+function removeFormField(key: number): void {
+  const removed = formFields.value.find((field) => field.key === key)
+  formFields.value = formFields.value.filter((field) => field.key !== key)
+  // 主键/排序字段被删时回落到第一个可用字段。
+  const removedName = removed?.name.trim()
+  if (!formFieldNames.value.includes(formPrimaryKey.value) || formPrimaryKey.value === removedName) {
+    formPrimaryKey.value = formFieldNames.value[0] ?? ''
+  }
+  if (formSortField.value && (!formFieldNames.value.includes(formSortField.value) || formSortField.value === removedName)) {
+    formSortField.value = formFieldNames.value[0] ?? ''
+  }
+}
+
+function validateFormDesigner(): string | null {
+  const fields = formFields.value.map((field) => ({ ...field }))
+  if (!fields.length) return '表单至少需要一个字段。'
+  const names = fields.map((field) => field.name.trim())
+  if (names.some((name) => !name)) return '每个字段都需要填写字段名。'
+  if (new Set(names).size !== names.length) return '字段名不能重复。'
+  if (names.includes('学号') || names.includes('姓名')) return '字段名不能使用系统保留的「学号」「姓名」。'
+  if (!names.includes(formPrimaryKey.value)) return '请从字段中选择一个主键。'
+  if (formSortField.value && !names.includes(formSortField.value)) return '排序依据需要从字段中选择。'
+  return null
+}
+
 const chosenCount = computed(() => targetMode.value === 'all'
   ? classInfo.value?.studentCount ?? 0
   : targetMode.value === 'groups'
@@ -36,6 +81,7 @@ const typeLabels: Record<AssignmentType, { title: string; description: string }>
   checkin: { title: '签到', description: '同学通过班级分享页签到。' },
   relay: { title: '接龙', description: '同学按顺序加入接龙名单。' },
   leave: { title: '假条', description: '同学上传假条并选日期，导出按日期分组。' },
+  form: { title: '表单', description: '自定义字段收集表格信息，可导出 Excel。' },
 }
 
 async function loadClass(): Promise<void> {
@@ -76,6 +122,10 @@ async function create(): Promise<void> {
   if (targetMode.value === 'groups' && !selectedGroupIds.value.length) { errorMessage.value = '请选择至少一个分组。'; return }
   if (targetMode.value === 'students' && !selectedStudentIds.value.length) { errorMessage.value = '请选择至少一位学生。'; return }
   if (!chosenCount.value) { errorMessage.value = '当前目标名单没有学生，请先整理班级名单。'; return }
+  if (type.value === 'form') {
+    const invalid = validateFormDesigner()
+    if (invalid) { errorMessage.value = invalid; return }
+  }
 
   saving.value = true
   try {
@@ -86,6 +136,14 @@ async function create(): Promise<void> {
       instructions: instructions.value.trim(),
       dueAt: dueLocal.value ? new Date(dueLocal.value).toISOString() : null,
       submissionMode: type.value === 'online' ? submissionMode.value : type.value === 'leave' ? 'file' : 'text',
+      ...(type.value === 'form' ? {
+        formConfig: {
+          fields: formFields.value.map((field) => ({ name: field.name.trim(), type: field.type, required: field.required })),
+          primaryKey: formPrimaryKey.value,
+          sortField: formSortField.value || null,
+          sortDir: formSortDir.value,
+        },
+      } : {}),
       target: {
         mode: targetMode.value,
         ...(targetMode.value === 'groups' ? { groupIds: selectedGroupIds.value } : {}),
@@ -163,6 +221,32 @@ onMounted(loadClass)
                   <select v-model="submissionMode"><option value="both">文字和文件都可以</option><option value="text">只收文字</option><option value="file">只收文件</option></select>
                 </label>
                 <p v-if="submissionMode !== 'text'" class="field-note">可上传 PDF、Word、图片、TXT 或 ZIP；单个文件最大 20 MB，最多 5 个。</p>
+              </div>
+            </Transition>
+            <Transition name="create-reveal">
+              <div v-if="type === 'form'" class="create-subfield form-designer">
+                <p class="field-note">像建数据表一样设计字段：学号、姓名由系统自动记录；主键用于识别每人唯一一行（全班不能重值），排序决定导出 Excel 的行顺序。</p>
+                <div class="form-designer-head form-designer-row" aria-hidden="true">
+                  <span>字段名</span><span>类型</span><span>必填</span><span></span>
+                </div>
+                <div v-for="field in formFields" :key="field.key" class="form-designer-row">
+                  <input v-model="field.name" maxlength="40" placeholder="字段名，例如：体温" />
+                  <select v-model="field.type" :aria-label="`${field.name || '未命名'} 类型`"><option value="text">文本</option><option value="number">数字</option><option value="date">日期</option></select>
+                  <label class="designer-check"><input v-model="field.required" type="checkbox" />必填</label>
+                  <button class="designer-remove" type="button" :aria-label="`删除字段 ${field.name || '未命名'}`" :disabled="formFields.length <= 1" @click="removeFormField(field.key)">✕</button>
+                </div>
+                <button class="button secondary designer-add" type="button" :disabled="formFields.length >= 30" @click="addFormField">＋ 添加字段</button>
+                <div class="form-designer-props">
+                  <label class="create-inline-label">主键
+                    <select v-model="formPrimaryKey"><option v-for="name in formFieldNames" :key="name" :value="name">{{ name }}</option></select>
+                  </label>
+                  <label class="create-inline-label">排序依据
+                    <select v-model="formSortField"><option value="">不排序</option><option v-for="name in formFieldNames" :key="name" :value="name">{{ name }}</option></select>
+                  </label>
+                  <label class="create-inline-label">方向
+                    <select v-model="formSortDir" :disabled="!formSortField"><option value="asc">升序</option><option value="desc">降序</option></select>
+                  </label>
+                </div>
               </div>
             </Transition>
           </section>

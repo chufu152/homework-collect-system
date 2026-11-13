@@ -123,7 +123,7 @@ async function saveFeedback(submissionId: string): Promise<void> {
   })
 }
 
-async function exportFile(format: 'csv' | 'zip' | 'docx', submissionId?: string): Promise<void> {
+async function exportFile(format: 'csv' | 'zip' | 'docx' | 'xlsx', submissionId?: string): Promise<void> {
   errorMessage.value = ''
   await exclusive(`export:${format}:${submissionId ?? ''}`, async () => {
     try {
@@ -217,6 +217,7 @@ onMounted(load)
             <div class="copy-field"><input :value="dashboard.assignment.shareUrl" readonly aria-label="学生分享链接" /><button class="button secondary" type="button" @click="copyText(dashboard.assignment.shareUrl, '分享链接已复制。')">复制链接</button></div>
             <button class="button secondary" type="button" @click="copyText(dashboard.missingMentionText || '全部完成', '未完成名单已复制。')">复制未完成名单</button>
             <button v-if="dashboard.assignment.type === 'online' || dashboard.assignment.type === 'leave'" class="button secondary" type="button" :disabled="isBusy('export:zip:')" @click="exportFile('zip')">{{ isBusy('export:zip:') ? '正在导出…' : '导出提交文件 ZIP' }}</button>
+            <button v-if="dashboard.assignment.type === 'form'" class="button primary" type="button" :disabled="isBusy('export:xlsx:')" @click="exportFile('xlsx')">{{ isBusy('export:xlsx:') ? '正在导出…' : '导出 Excel 表格' }}</button>
             <button class="button secondary" type="button" :disabled="isBusy('export:csv:')" @click="exportFile('csv')">{{ isBusy('export:csv:') ? '正在导出…' : '导出名单 CSV' }}</button>
             <button v-if="dashboard.assignment.state === 'draft'" class="button primary" type="button" :disabled="saving" @click="changeState('published')">发布</button>
             <button v-if="dashboard.assignment.state === 'published'" class="button danger" type="button" :disabled="saving" @click="changeState('closed')">停止收取</button>
@@ -224,6 +225,23 @@ onMounted(load)
         </section>
 
         <div class="summary-strip"><strong>还没完成：</strong><span v-if="dashboard.missingMentionText" class="count-chip">{{ dashboard.missingMentionText }}</span><span v-else class="count-chip">全部完成</span></div>
+
+        <!-- 表单作业：数据文件里的全部收集记录 -->
+        <section v-if="dashboard.assignment.type === 'form' && dashboard.form" class="surface form-records-wrap" style="overflow:auto" aria-label="表单收集记录">
+          <div class="section-heading" style="margin-bottom:6px"><div><p class="eyebrow">已收集 {{ dashboard.records?.length ?? 0 }} 行</p><h2>收集记录</h2></div></div>
+          <table class="student-table form-records">
+            <thead><tr><th>学号</th><th>姓名</th><th v-for="field in dashboard.form.fields" :key="field.name">{{ field.name }}</th></tr></thead>
+            <tbody>
+              <tr v-if="!dashboard.records?.length"><td :colspan="dashboard.form.fields.length + 2" class="muted-copy">还没有人填写。</td></tr>
+              <tr v-for="record in dashboard.records" :key="record.studentNo">
+                <td>{{ record.studentNo }}</td>
+                <td><strong>{{ record.name }}</strong></td>
+                <td v-for="field in dashboard.form!.fields" :key="field.name">{{ record.values[field.name] || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
         <p v-if="notice" class="form-message success-text" role="status">{{ notice }}</p>
         <p v-if="errorMessage" class="form-message error-text" role="alert">{{ errorMessage }}</p>
         <p v-if="!dashboard.items.length" class="field-note" role="status">这项作业还没有目标学生；请到「班级名单」导入名单后重新发布，已有统计与导出暂时没有内容。</p>
