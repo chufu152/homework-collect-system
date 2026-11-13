@@ -175,6 +175,27 @@ export class AssignmentsService {
     return { id: updated.id, state: updated.state, shareUrl: this.shareUrl(updated.shareCode) }
   }
 
+  /**
+   * 彻底删除一项作业：数据库记录随外键级联清空（提交/版本/回执/目标等），
+   * 附件物理文件在事务成功后尽力删除；个别文件删除失败不影响作业下线。
+   */
+  async remove(assignmentId: string) {
+    const assignment = await this.prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      select: { id: true, title: true },
+    })
+    if (!assignment) throw new NotFoundException('Assignment not found.')
+
+    const files = await this.prisma.submissionFile.findMany({
+      where: { version: { submission: { assignmentId } } },
+      select: { storageKey: true },
+    })
+    await this.prisma.assignment.delete({ where: { id: assignmentId } })
+    const results = await Promise.allSettled(files.map((file) => this.storage.remove(file.storageKey)))
+    const failedFiles = results.filter((result) => result.status === 'rejected').length
+    return { removed: true, removedFiles: files.length - failedFiles }
+  }
+
   async publicDetails(shareCode: string) {
     const assignment = await this.publicAssignment(shareCode)
     return {

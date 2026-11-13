@@ -11,6 +11,11 @@ const assignments = ref<AssignmentListItem[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
 const notice = ref('')
+// 删除作业：二次确认弹窗，删除中禁止重复操作。
+const deleteTarget = ref<AssignmentListItem | null>(null)
+const deleting = ref(false)
+// 删除失败用独立提示，避免覆盖整页的错误状态把列表顶掉。
+const actionError = ref('')
 
 const totals = computed(() => ({
   assignments: assignments.value.length,
@@ -69,6 +74,29 @@ function openAssignment(id: string): void {
   void router.push(`/assignments/${id}`)
 }
 
+function confirmDelete(): void {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  void (async () => {
+    deleting.value = true
+    actionError.value = ''
+    try {
+      const result = await api.deleteAssignment(target.id)
+      assignments.value = assignments.value.filter((item) => item.id !== target.id)
+      notice.value = result.removedFiles > 0
+        ? `作业「${target.title}」已删除（含 ${result.removedFiles} 个附件文件）。`
+        : `作业「${target.title}」已删除。`
+      deleteTarget.value = null
+      window.setTimeout(() => { notice.value = '' }, 2600)
+    } catch (error) {
+      actionError.value = describeError(error, '作业删除失败。')
+      deleteTarget.value = null
+    } finally {
+      deleting.value = false
+    }
+  })()
+}
+
 async function copyShareLink(event: MouseEvent, url: string): Promise<void> {
   event.preventDefault()
   event.stopPropagation()
@@ -119,7 +147,10 @@ onMounted(load)
             <span class="assignment-title"><span class="type-mark" :class="assignment.type" />{{ assignment.title }}</span>
             <span class="assignment-subtitle">{{ subtitle(assignment) }}</span>
           </div>
-          <span class="status-pill" :class="assignment.state">{{ stateLabel(assignment.state) }}</span>
+          <span class="status-cell">
+            <span class="status-pill" :class="assignment.state">{{ stateLabel(assignment.state) }}</span>
+            <button class="assignment-delete" type="button" :aria-label="`删除${assignment.title}`" title="删除这项作业" @click.stop="deleteTarget = assignment">删除</button>
+          </span>
           <span class="row-metric"><strong>{{ assignment.submittedCount }} / {{ assignment.expectedCount }}</strong>已完成</span>
           <span class="row-metric"><strong>{{ assignment.missingCount }}</strong>未完成</span>
           <span class="row-arrow" aria-hidden="true">›</span>
@@ -128,6 +159,24 @@ onMounted(load)
         </div>
       </div>
       <p v-if="notice" class="form-message success-text" role="status" style="margin-top:12px">{{ notice }}</p>
+      <p v-if="actionError" class="form-message error-text" role="alert" style="margin-top:12px">{{ actionError }}</p>
+
+      <!-- 删除作业二次确认弹窗 -->
+      <Teleport to="body">
+        <Transition name="modal">
+          <div v-if="deleteTarget" class="confirm-root">
+            <div class="confirm-backdrop" @click="!deleting && (deleteTarget = null)"></div>
+            <div class="confirm-panel" role="alertdialog" aria-modal="true" aria-label="确认删除作业">
+              <h3>确认删除作业</h3>
+              <p>将永久删除作业「{{ deleteTarget.title }}」及其全部提交记录、回执和{{ deleteTarget.submittedCount > 0 ? ` ${deleteTarget.submittedCount} 份提交的附件文件` : '相关数据' }}，此操作不可恢复。确定继续吗？</p>
+              <div class="confirm-foot">
+                <button class="button ghost" type="button" :disabled="deleting" @click="deleteTarget = null">取消</button>
+                <button class="button danger-solid" type="button" :disabled="deleting" @click="confirmDelete">{{ deleting ? '正在删除…' : '永久删除' }}</button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
     </main>
   </div>
 </template>

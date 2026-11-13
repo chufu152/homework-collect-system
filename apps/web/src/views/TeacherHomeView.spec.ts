@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const { api, getActiveClass } = vi.hoisted(() => ({
-  api: { listAssignments: vi.fn() },
+  api: { listAssignments: vi.fn(), deleteAssignment: vi.fn() },
   getActiveClass: vi.fn(),
 }))
 
@@ -34,7 +34,7 @@ describe('teacher home assignment boundaries', () => {
   })
 
   it('explains an empty assignment list and offers the first setup actions', async () => {
-    const wrapper = mount(TeacherHomeView, { global: { stubs: routerStubs } })
+    const wrapper = mount(TeacherHomeView, { global: { stubs: { ...routerStubs, teleport: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('还没有发布作业')
@@ -47,7 +47,7 @@ describe('teacher home assignment boundaries', () => {
       items: [assignment('a1', 'draft'), assignment('a2', 'published'), assignment('a3', 'closed')],
       total: 3,
     })
-    const wrapper = mount(TeacherHomeView, { global: { stubs: routerStubs } })
+    const wrapper = mount(TeacherHomeView, { global: { stubs: { ...routerStubs, teleport: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('草稿，学生还不能打开')
@@ -57,7 +57,7 @@ describe('teacher home assignment boundaries', () => {
 
   it('offers an in-place retry when the assignment list cannot be loaded', async () => {
     api.listAssignments.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce({ items: [], total: 0 })
-    const wrapper = mount(TeacherHomeView, { global: { stubs: routerStubs } })
+    const wrapper = mount(TeacherHomeView, { global: { stubs: { ...routerStubs, teleport: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('网络连接失败')
@@ -69,5 +69,46 @@ describe('teacher home assignment boundaries', () => {
     expect(api.listAssignments).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('还没有发布作业')
     expect(wrapper.text()).not.toContain('网络连接失败')
+  })
+
+  it('deletes an assignment only after the frosted-glass confirm dialog', async () => {
+    api.listAssignments.mockResolvedValue({ items: [assignment('a3', 'closed')], total: 1 })
+    api.deleteAssignment.mockResolvedValue({ removed: true, removedFiles: 2 })
+    const wrapper = mount(TeacherHomeView, { global: { stubs: { ...routerStubs, teleport: true } } })
+    await flushPromises()
+
+    // 点击删除按钮本身不会触发行跳转（router.push 未被调用）。
+    await wrapper.get('button.assignment-delete').trigger('click')
+    expect(wrapper.text()).toContain('确认删除作业')
+    expect(wrapper.text()).toContain('1 份提交的附件文件')
+    expect(api.deleteAssignment).not.toHaveBeenCalled()
+
+    await wrapper.get('.confirm-panel').get('.button.ghost').trigger('click')
+    expect(api.deleteAssignment).not.toHaveBeenCalled()
+    expect(wrapper.find('.confirm-panel').exists()).toBe(false)
+
+    await wrapper.get('button.assignment-delete').trigger('click')
+    await wrapper.get('.confirm-panel').get('.button.danger-solid').trigger('click')
+    await flushPromises()
+
+    expect(api.deleteAssignment).toHaveBeenCalledWith('a3')
+    expect(wrapper.text()).toContain('已删除')
+    expect(wrapper.text()).not.toContain('已结束')
+  })
+
+  it('keeps the assignment listed and explains the failure when deletion is rejected', async () => {
+    api.listAssignments.mockResolvedValue({ items: [assignment('a3', 'closed')], total: 1 })
+    api.deleteAssignment.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const wrapper = mount(TeacherHomeView, { global: { stubs: { ...routerStubs, teleport: true } } })
+    await flushPromises()
+
+    await wrapper.get('button.assignment-delete').trigger('click')
+    await wrapper.get('.confirm-panel').get('.button.danger-solid').trigger('click')
+    await flushPromises()
+
+    // 失败提示以独立 alert 展示，列表不被顶掉。
+    expect(wrapper.get('[role="alert"]').text()).toContain('网络连接失败')
+    expect(wrapper.text()).toContain('已结束')
+    expect(wrapper.find('.confirm-panel').exists()).toBe(false)
   })
 })

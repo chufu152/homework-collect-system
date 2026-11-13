@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common'
 import { AnyFilesInterceptor } from '@nestjs/platform-express/multer/interceptors/any-files.interceptor'
 import type { Express, Response } from 'express'
 import { AdminGuard } from '../common/admin.guard.js'
@@ -30,6 +30,11 @@ export class AssignmentsController {
   @Patch('assignments/:assignmentId/state')
   setState(@Param('assignmentId') assignmentId: string, @Body() input: AssignmentStateDto) {
     return this.assignments.setState(assignmentId, input)
+  }
+
+  @Delete('assignments/:assignmentId')
+  remove(@Param('assignmentId') assignmentId: string) {
+    return this.assignments.remove(assignmentId)
   }
 
   @Get('assignments/:assignmentId/dashboard')

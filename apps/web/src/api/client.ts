@@ -270,6 +270,8 @@ export const api = {
   updateStudent: (classId: string, studentId: string, data: { studentNo?: string; name?: string }) => request<{ id: string; studentNo: string; name: string }>(`/classes/${encodeURIComponent(classId)}/students/${encodeURIComponent(studentId)}`, { method: 'PATCH', body: JSON.stringify(data) }),
   /** 从云端彻底删除班级：名单、分组、作业与提交记录全部清除，不可恢复。 */
   deleteClass: (classId: string) => request<{ removed: boolean; removedFiles: number }>(`/classes/${encodeURIComponent(classId)}`, { method: 'DELETE' }),
+  /** 彻底删除一项作业：提交记录、回执与附件文件一并清除，不可恢复。 */
+  deleteAssignment: (assignmentId: string) => request<{ removed: boolean; removedFiles: number }>(`/assignments/${encodeURIComponent(assignmentId)}`, { method: 'DELETE' }),
   listGroups: async (classId: string) => {
     const result = await request<unknown>(`/classes/${encodeURIComponent(classId)}/groups`)
     if (!Array.isArray(result)) throw invalidResponse('服务返回的分组列表格式不正确，请重新读取。')
