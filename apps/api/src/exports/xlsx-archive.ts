@@ -25,12 +25,16 @@ function escapeXml(value: string): string {
   })[char]!)
 }
 
-function cellXml(ref: string, value: string): string {
+/** 单元格值：字符串走内联文本，数字走原生数值单元格（Excel 里可直接求和排序）。 */
+export type XlsxCellValue = string | number
+
+function cellXml(ref: string, value: XlsxCellValue): string {
   if (value === '') return `<c r="${ref}"/>`
+  if (typeof value === 'number') return `<c r="${ref}"><v>${value}</v></c>`
   return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`
 }
 
-function sheetXml(rows: string[][]): string {
+function sheetXml(rows: XlsxCellValue[][]): string {
   const body = rows.map((row, rowIndex) => {
     const cells = row.map((value, columnIndex) => cellXml(`${columnLetter(columnIndex)}${rowIndex + 1}`, value)).join('')
     return `<row r="${rowIndex + 1}">${cells}</row>`
@@ -38,7 +42,7 @@ function sheetXml(rows: string[][]): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`
 }
 
-export function createXlsx(rows: string[][]): Buffer {
+export function createXlsx(rows: XlsxCellValue[][]): Buffer {
   const files: Zippable = {
     '[Content_Types].xml': new TextEncoder().encode(
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',

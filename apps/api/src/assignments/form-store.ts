@@ -11,8 +11,11 @@ import type { StorageService } from '../storage/storage.service.js'
 
 export type FormFieldType = 'studentNo' | 'name' | 'date' | 'number' | 'text' | 'file'
 
-/** 日期字段的格式：长（2026年11月13日）/ 中（2026-11-13）/ 短（11-13）/ 自定义（自由填写）。 */
+/** 日期字段的格式：长（2026年11月13日）/ 中（2026-11-13）/ 短（2026/11/13）/ 自定义（自由填写）。 */
 export type FormDateStyle = 'long' | 'medium' | 'short' | 'custom'
+
+/** 数字字段的格式：小数（默认，允许小数点）/ 整数（只允许整数）。 */
+export type FormNumberKind = 'decimal' | 'integer'
 
 export interface FormField {
   name: string
@@ -20,6 +23,8 @@ export interface FormField {
   required: boolean
   /** 仅 date 类型使用；缺省视为 medium。 */
   dateStyle?: FormDateStyle
+  /** 仅 number 类型使用；缺省视为 decimal。 */
+  numberKind?: FormNumberKind
 }
 
 export interface FormConfig {
@@ -42,6 +47,7 @@ const IDENTITY_NO = '学号'
 const IDENTITY_NAME = '姓名'
 const FIELD_TYPES: readonly FormFieldType[] = ['studentNo', 'name', 'date', 'number', 'text', 'file']
 const DATE_STYLES: readonly FormDateStyle[] = ['long', 'medium', 'short', 'custom']
+const NUMBER_KINDS: readonly FormNumberKind[] = ['decimal', 'integer']
 
 /** 每个作业一把进程内写锁，避免并发读改写同一个数据文件。 */
 const locks = new Map<string, Promise<unknown>>()
@@ -74,11 +80,16 @@ export function validateFormConfig(config: FormConfig): string | null {
     if (field.type === 'date' && field.dateStyle !== undefined && !DATE_STYLES.includes(field.dateStyle)) {
       return `字段「${name}」的日期格式不正确。`
     }
+    if (field.type === 'number' && field.numberKind !== undefined && !NUMBER_KINDS.includes(field.numberKind)) {
+      return `字段「${name}」的数字格式不正确。`
+    }
     seen.add(name)
     field.name = name
     field.required = field.required === true
     if (field.type === 'date') field.dateStyle = field.dateStyle ?? 'medium'
     else delete field.dateStyle
+    if (field.type === 'number') field.numberKind = field.numberKind ?? 'decimal'
+    else delete field.numberKind
   }
   if (!seen.has(config.primaryKey)) return '主键必须从表单字段中选择。'
   if (config.sortField && !seen.has(config.sortField)) return '排序依据必须从表单字段中选择。'
@@ -90,14 +101,14 @@ export function validateFormConfig(config: FormConfig): string | null {
 function isValidDateValue(style: FormDateStyle, value: string): boolean {
   if (style === 'long') return /^\d{4}年\d{1,2}月\d{1,2}日$/.test(value)
   if (style === 'medium') return /^\d{4}-\d{2}-\d{2}$/.test(value)
-  if (style === 'short') return /^\d{1,2}-\d{1,2}$/.test(value)
+  if (style === 'short') return /^\d{4}\/\d{1,2}\/\d{1,2}$/.test(value)
   return true
 }
 
 export const DATE_STYLE_HINT: Record<FormDateStyle, string> = {
   long: '2026年11月13日',
   medium: '2026-11-13',
-  short: '11-13',
+  short: '2026/11/13',
   custom: '按老师要求的格式',
 }
 
@@ -126,7 +137,14 @@ export function validateFormValues(
     if (field.required && !value) return `请填写「${field.name}」。`
     if (value.length > MAX_VALUE_LENGTH) return `「${field.name}」的内容不能超过 ${MAX_VALUE_LENGTH} 字。`
     if (value) {
-      if (field.type === 'number' && !/^-?\d+(\.\d+)?$/.test(value)) return `「${field.name}」需要填写数字。`
+      if (field.type === 'number') {
+        const numberPattern = field.numberKind === 'integer' ? /^-?\d+$/ : /^-?\d+(\.\d+)?$/
+        if (!numberPattern.test(value)) {
+          return field.numberKind === 'integer'
+            ? `「${field.name}」需要填写整数。`
+            : `「${field.name}」需要填写数字。`
+        }
+      }
       if (field.type === 'date' && !isValidDateValue(field.dateStyle ?? 'medium', value)) {
         return `「${field.name}」需要按 ${DATE_STYLE_HINT[field.dateStyle ?? 'medium']} 格式填写。`
       }
@@ -283,6 +301,15 @@ export async function assertPrimaryKeyAvailable(
   if (conflict) throw new Error(`主键「${config.primaryKey}」的值「${pkValue}」已被 ${conflict.name} 使用。`)
 }
 
+/** 日期值转可比较的数字：按 年*10000+月*100+日 比较（长/中/短格式通用，未补零也对）。 */
+function dateComparable(value: string): number {
+  const parts = value.split(/\D+/).filter(Boolean).map(Number)
+  if (parts.length >= 3 && parts.every((part) => Number.isFinite(part))) {
+    return parts[0] * 10000 + parts[1] * 100 + parts[2]
+  }
+  return 0
+}
+
 /** 按配置的排序依据整理记录顺序（用于展示与导出）。 */
 export function sortFormRecords(config: FormConfig, records: FormRecord[]): FormRecord[] {
   if (!config.sortField) return records
@@ -292,6 +319,7 @@ export function sortFormRecords(config: FormConfig, records: FormRecord[]): Form
     const a = left.values[config.sortField!] ?? ''
     const b = right.values[config.sortField!] ?? ''
     if (field?.type === 'number') return (Number(a) - Number(b)) * dir
+    if (field?.type === 'date') return (dateComparable(a) - dateComparable(b)) * dir
     return a.localeCompare(b, 'zh-CN') * dir
   })
 }

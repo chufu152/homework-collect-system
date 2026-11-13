@@ -252,8 +252,8 @@ function dateInputValue(field: FormFieldConfig): string {
     return ''
   }
   if (style === 'short') {
-    const match = raw.match(/^(\d{1,2})-(\d{1,2})$/)
-    if (match) return `${new Date().getFullYear()}-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`
+    const match = raw.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
+    if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
     return ''
   }
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : ''
@@ -268,7 +268,7 @@ function onDateChange(field: FormFieldConfig, event: Event): void {
   formValues.value[field.name] = style === 'long'
     ? `${year}年${Number(month)}月${Number(day)}日`
     : style === 'short'
-      ? `${Number(month)}-${Number(day)}`
+      ? `${year}/${month.padStart(2, '0')}/${day.padStart(2, '0')}`
       : value
 }
 
@@ -506,9 +506,9 @@ onMounted(load)
                 v-model="formValues[field.name]"
                 class="form-sheet-input"
                 :type="field.type === 'number' ? 'number' : 'text'"
-                :step="field.type === 'number' ? 'any' : undefined"
+                :step="field.type === 'number' ? (field.numberKind === 'integer' ? '1' : 'any') : undefined"
                 :aria-label="field.name"
-                :placeholder="field.type === 'date' ? '按老师要求的格式填写' : field.required ? '必填' : ''"
+                :placeholder="field.type === 'date' ? '按老师要求的格式填写' : field.type === 'number' && field.numberKind === 'integer' ? (field.required ? '必填，整数' : '整数') : field.required ? '必填' : ''"
               />
             </template>
           </div>

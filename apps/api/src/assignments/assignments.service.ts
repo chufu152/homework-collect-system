@@ -807,9 +807,17 @@ export class AssignmentsService {
     if (!config) throw new NotFoundException('Form config is missing.')
     const records = sortFormRecords(config, await readFormRecords(this.storage, assignment.id, config))
     const columns = displayColumns(config)
+    // 数字字段的列导出为真正的数值单元格，Excel 里可直接求和/排序。
+    const numericFields = new Set(config.fields.filter((field) => field.type === 'number').map((field) => field.name))
     const rows = [
       columns.map((column) => column.label),
-      ...records.map((record) => columns.map((column) => recordCell(column, record))),
+      ...records.map((record) => columns.map((column) => {
+        const value = recordCell(column, record)
+        if (column.key === 'field' && numericFields.has(column.field.name) && value !== '' && Number.isFinite(Number(value))) {
+          return Number(value)
+        }
+        return value
+      })),
     ]
     const { createXlsx } = await import('../exports/xlsx-archive.js')
     return { filename: `${this.fileBase(assignment.title)}.xlsx`, content: createXlsx(rows) }

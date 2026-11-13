@@ -49,8 +49,13 @@ const fieldTypeOptions: Array<{ value: FormFieldConfig['type']; label: string }>
 const dateStyleLabels: Array<{ value: NonNullable<FormFieldConfig['dateStyle']>; label: string }> = [
   { value: 'long', label: '长日期（2026年11月13日）' },
   { value: 'medium', label: '中日期（2026-11-13）' },
-  { value: 'short', label: '短日期（11-13）' },
+  { value: 'short', label: '短日期（2026/11/13）' },
   { value: 'custom', label: '自定义（自由填写）' },
+]
+
+const numberKindLabels: Array<{ value: NonNullable<FormFieldConfig['numberKind']>; label: string }> = [
+  { value: 'decimal', label: '小数（允许小数点）' },
+  { value: 'integer', label: '整数（不允许小数点）' },
 ]
 
 function addFormField(): void {
@@ -156,6 +161,7 @@ async function create(): Promise<void> {
             type: field.type,
             required: field.required,
             ...(field.type === 'date' ? { dateStyle: field.dateStyle ?? 'medium' } : {}),
+            ...(field.type === 'number' ? { numberKind: field.numberKind ?? 'decimal' } : {}),
           })),
           primaryKey: formPrimaryKey.value,
           sortField: formSortField.value || null,
@@ -260,6 +266,12 @@ onMounted(loadClass)
                     <span>日期格式</span>
                     <select v-model="field.dateStyle" :aria-label="`${field.name || '未命名'} 日期格式`">
                       <option v-for="style in dateStyleLabels" :key="style.value" :value="style.value">{{ style.label }}</option>
+                    </select>
+                  </div>
+                  <div v-if="field.type === 'number'" class="form-designer-datestyle">
+                    <span>数字格式</span>
+                    <select v-model="field.numberKind" :aria-label="`${field.name || '未命名'} 数字格式`">
+                      <option v-for="kind in numberKindLabels" :key="kind.value" :value="kind.value">{{ kind.label }}</option>
                     </select>
                   </div>
                 </template>

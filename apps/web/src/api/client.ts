@@ -373,6 +373,8 @@ export interface FormFieldConfig {
   required: boolean
   /** 仅 date 类型：长/中/短日期或自定义格式。 */
   dateStyle?: 'long' | 'medium' | 'short' | 'custom'
+  /** 仅 number 类型：小数（默认）或整数。 */
+  numberKind?: 'decimal' | 'integer'
 }
 
 export interface FormConfigPayload {

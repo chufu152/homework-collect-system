@@ -33,6 +33,11 @@ export class FormFieldDto {
   @IsOptional()
   @IsIn(['long', 'medium', 'short', 'custom'])
   dateStyle?: 'long' | 'medium' | 'short' | 'custom'
+
+  /** 仅 number 类型：小数（默认）或整数。 */
+  @IsOptional()
+  @IsIn(['decimal', 'integer'])
+  numberKind?: 'decimal' | 'integer'
 }
 
 /** 表单作业的字段配置（Access 式建表：字段 + 主键 + 排序依据）。 */

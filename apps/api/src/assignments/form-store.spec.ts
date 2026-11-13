@@ -42,7 +42,7 @@ function service(): StorageService {
 
 const config: FormConfig = {
   fields: [
-    { name: '体温', type: 'number', required: true },
+    { name: '体温', type: 'number', required: true, numberKind: 'decimal' },
     { name: '日期', type: 'date', required: false, dateStyle: 'medium' },
   ],
   primaryKey: '体温',
@@ -108,10 +108,32 @@ describe('form value validation', () => {
     const longConfig: FormConfig = { ...config, fields: [{ name: '日期', type: 'date', required: true, dateStyle: 'long' }], primaryKey: '日期' }
     expect(validateFormValues(longConfig, { 日期: '2026年11月13日' }, identity)).toBeTypeOf('object')
     expect(validateFormValues(longConfig, { 日期: '2026-11-13' }, identity)).toContain('格式')
+    // 短日期：2026/11/13 格式（年/月/日）。
     const shortConfig: FormConfig = { ...config, fields: [{ name: '日期', type: 'date', required: true, dateStyle: 'short' }], primaryKey: '日期' }
-    expect(validateFormValues(shortConfig, { 日期: '11-13' }, identity)).toBeTypeOf('object')
+    expect(validateFormValues(shortConfig, { 日期: '2026/11/13' }, identity)).toBeTypeOf('object')
+    expect(validateFormValues(shortConfig, { 日期: '2026/7/4' }, identity)).toBeTypeOf('object')
+    expect(validateFormValues(shortConfig, { 日期: '11-13' }, identity)).toContain('格式')
     const customConfig: FormConfig = { ...config, fields: [{ name: '日期', type: 'date', required: true, dateStyle: 'custom' }], primaryKey: '日期' }
     expect(validateFormValues(customConfig, { 日期: '十一月中旬' }, identity)).toBeTypeOf('object')
+  })
+
+  it('validates number fields by the configured number kind', () => {
+    const intConfig: FormConfig = { ...config, fields: [{ name: '人数', type: 'number', required: true, numberKind: 'integer' }], primaryKey: '人数' }
+    expect(validateFormValues(intConfig, { 人数: '42' }, identity)).toBeTypeOf('object')
+    expect(validateFormValues(intConfig, { 人数: '36.5' }, identity)).toContain('需要填写整数')
+    // 缺省 numberKind 视为小数，允许小数点。
+    expect(validateFormValues(config, { 体温: '36.5', 日期: '2026-11-13' }, identity)).toBeTypeOf('object')
+  })
+
+  it('sorts date records chronologically regardless of zero padding', () => {
+    const dateConfig: FormConfig = { ...config, fields: [{ name: '日期', type: 'date', required: true, dateStyle: 'short' }], primaryKey: '日期', sortField: '日期', sortDir: 'asc' }
+    const records: FormRecord[] = [
+      { studentNo: 'S03', name: '赵六', values: { 日期: '2027/1/1' } },
+      { studentNo: 'S01', name: '张三', values: { 日期: '2026/11/13' } },
+      { studentNo: 'S02', name: '李四', values: { 日期: '2026/7/4' } },
+    ]
+    const sorted = sortFormRecords(dateConfig, records)
+    expect(sorted.map((row) => row.studentNo)).toEqual(['S02', 'S01', 'S03'])
   })
 
   it('overrides identity fields with server-side roster values and keeps files', () => {
