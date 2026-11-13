@@ -26,8 +26,8 @@ export class CreateAssignmentDto {
   @Length(1, 120)
   title!: string
 
-  @IsIn(['online', 'offline', 'checkin', 'relay'])
-  type!: 'online' | 'offline' | 'checkin' | 'relay'
+  @IsIn(['online', 'offline', 'checkin', 'relay', 'leave'])
+  type!: 'online' | 'offline' | 'checkin' | 'relay' | 'leave'
 
   @IsOptional()
   @IsString()
@@ -117,6 +117,12 @@ export class SubmitDto extends StudentLookupDto {
   @IsString()
   @MaxLength(20000)
   textContent?: string
+
+  /** 假条类型：JSON 数组字符串，与 files 顺序一一对应，每项为 YYYY-MM-DD。 */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  fileDates?: string
 }
 
 export class CompletionDto {

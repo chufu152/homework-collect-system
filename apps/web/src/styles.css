@@ -177,6 +177,14 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
 .file-field small { line-height: 1.5; }
 .file-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; color: #49605e; font-size: 12px; font-weight: 400; }
 .file-list li { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+/* 假条：每张一条，文件名 + 日期选择 + 移除 */
+.slip-list { gap: 0; }
+.slip-list .slip-row { flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 0; }
+.slip-list .slip-name { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #2b4442; }
+.slip-list .slip-name small { font-weight: 400; }
+.slip-date { display: inline-flex; align-items: center; gap: 6px; }
+.slip-date input { min-height: 30px; padding: 3px 8px; font-size: 12px; }
+.slip-remove { min-height: 30px; padding: 3px 9px; font-size: 12px; }
 .status-panel { margin-top: 30px; }
 .status-panel h1, .status-panel h2 { margin: 0 0 8px; font-size: 21px; }
 .status-panel p { color: var(--muted); font-size: 13px; line-height: 1.65; }

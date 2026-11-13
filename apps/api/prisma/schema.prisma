@@ -12,6 +12,7 @@ enum AssignmentType {
   offline
   checkin
   relay
+  leave
 }
 
 enum AssignmentState {
@@ -160,6 +161,7 @@ model SubmissionFile {
   originalName   String
   contentType    String
   sizeBytes      Int
+  slipDate       DateTime?
   createdAt      DateTime          @default(now())
   version        SubmissionVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
 

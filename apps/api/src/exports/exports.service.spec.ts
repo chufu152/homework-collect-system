@@ -36,6 +36,41 @@ describe('submission file export', () => {
     expect(storage.read).toHaveBeenCalledWith('private/key')
   })
 
+  it('groups leave slips by slip date and names files as student name + date', async () => {
+    const prisma = {
+      assignment: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'a3',
+          title: '请假条',
+          type: 'leave',
+          submittedAt: new Date('2026-11-10T00:00:00.000Z'),
+          submissions: [
+            {
+              student: { id: 's1', studentNo: '1001', name: '张三' },
+              submittedAt: new Date('2026-11-10T00:00:00.000Z'),
+              versions: [{ files: [
+                { storageKey: 'k1', originalName: 'IMG_001.jpg', sizeBytes: 9, slipDate: new Date('2026-11-12T00:00:00.000Z') },
+                { storageKey: 'k2', originalName: 'IMG_002.jpg', sizeBytes: 9, slipDate: new Date('2026-11-13T00:00:00.000Z') },
+              ] }],
+            },
+            {
+              student: { id: 's2', studentNo: '1002', name: '李四' },
+              submittedAt: new Date('2026-11-11T00:00:00.000Z'),
+              versions: [{ files: [{ storageKey: 'k3', originalName: 'IMG_003.jpg', sizeBytes: 9, slipDate: new Date('2026-11-12T00:00:00.000Z') }] }],
+            },
+          ],
+        }),
+      },
+    }
+    const storage = { read: vi.fn().mockResolvedValue(Buffer.from('jpg bytes')) }
+    const exported = await new ExportsService(prisma as never, storage as never).exportSubmissionFiles('a3')
+    expect(zipNames(exported.content)).toEqual([
+      '2026-11-12/张三-2026-11-12.jpg',
+      '2026-11-13/张三-2026-11-13.jpg',
+      '2026-11-12/李四-2026-11-12.jpg',
+    ])
+  })
+
   it('refuses ZIP payloads above the configured memory safety limit before reading files', async () => {
     process.env.MAX_EXPORT_BYTES = '8'
     const prisma = {

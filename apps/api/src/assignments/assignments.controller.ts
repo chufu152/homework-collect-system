@@ -105,7 +105,7 @@ export class PublicAssignmentsController {
   @Post(':shareCode/submissions')
   @UseInterceptors(AnyFilesInterceptor({
     limits: {
-      files: 10,
+      files: 30,
       fileSize: Number(process.env.MAX_UPLOAD_BYTES ?? 20971520),
     },
   }))

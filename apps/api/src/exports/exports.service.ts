@@ -26,15 +26,35 @@ export class ExportsService {
     const maximumBytes = Number(process.env.MAX_EXPORT_BYTES ?? 209715200)
     if (totalBytes > maximumBytes) throw new PayloadTooLargeException(`ZIP export exceeds the ${Math.floor(maximumBytes / 1024 / 1024)} MB safety limit.`)
     const entries: Array<{ name: string; content: Buffer }> = []
+    const usedNames = new Set<string>()
+    const isLeave = assignment.type === 'leave'
     for (const submission of assignment.submissions) {
-      const folder = `${submission.student.studentNo}-${submission.student.name}-${assignment.title}`
-        .normalize('NFKC')
-        .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '-')
-        .replace(/\.+/g, '-')
-        .trim() || 'submission'
+      const folder = isLeave
+        ? ''
+        : `${submission.student.studentNo}-${submission.student.name}-${assignment.title}`
+          .normalize('NFKC')
+          .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '-')
+          .replace(/\.+/g, '-')
+          .trim() || 'submission'
       for (const file of submission.versions[0]?.files ?? []) {
+        let entryName: string
+        if (isLeave) {
+          // 假条：按日期分组文件夹，文件命名为「姓名-日期」，同名追加序号。
+          const date = (file.slipDate ?? submission.submittedAt).toISOString().slice(0, 10)
+          const ext = file.originalName.includes('.') ? file.originalName.slice(file.originalName.lastIndexOf('.')).toLowerCase() : ''
+          const base = `${submission.student.name}-${date}`
+          entryName = `${date}/${base}${ext}`
+          let counter = 2
+          while (usedNames.has(entryName)) {
+            entryName = `${date}/${base}-${counter}${ext}`
+            counter += 1
+          }
+        } else {
+          entryName = `${folder}/${safeDownloadName(file.originalName)}`
+        }
+        usedNames.add(entryName)
         entries.push({
-          name: `${folder}/${safeDownloadName(file.originalName)}`,
+          name: entryName,
           content: await this.storage.read(file.storageKey),
         })
       }

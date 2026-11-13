@@ -13,6 +13,8 @@ const confirmation = ref('')
 const studentName = ref('')
 const textContent = ref('')
 const selectedFiles = ref<File[]>([])
+// 假条：每张假条单独选择日期，与 selectedFiles 顺序一一对应。
+const slipDates = ref<string[]>([])
 const relayContent = ref('')
 const relayEntries = ref<Array<{ position: number; displayName: string; content: string }>>([])
 const relayError = ref('')
@@ -50,9 +52,23 @@ async function refreshRelay(): Promise<void> {
   }
 }
 
+function todayISO(): string {
+  const now = new Date()
+  const offset = now.getTimezoneOffset() * 60000
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10)
+}
+
 function onFileChange(event: Event): void {
   const target = event.target as HTMLInputElement
   selectedFiles.value = Array.from(target.files ?? [])
+  // 假条：新选择的文件默认填今天的日期。
+  slipDates.value = selectedFiles.value.map((_, index) => slipDates.value[index] ?? todayISO())
+}
+
+function removeSlipFile(index: number): void {
+  selectedFiles.value = selectedFiles.value.filter((_, current) => current !== index)
+  slipDates.value = slipDates.value.filter((_, current) => current !== index)
+  if (fileInput.value) fileInput.value.value = ''
 }
 
 async function checkIn(): Promise<void> {
@@ -91,17 +107,30 @@ async function submitOnline(): Promise<void> {
     errorMessage.value = `最多选择 ${maxCount} 个文件。`
     return
   }
+  const isLeave = assignment.value.type === 'leave'
+  if (isLeave) {
+    if (!selectedFiles.value.length) {
+      errorMessage.value = '请至少上传一张假条。'
+      return
+    }
+    if (slipDates.value.length !== selectedFiles.value.length || slipDates.value.some((value) => !value)) {
+      errorMessage.value = '请为每张假条选择日期。'
+      return
+    }
+  }
   await perform(async () => {
     const result = await api.submitAssignment(props.shareCode, {
       studentName: studentName.value.trim(),
       textContent: textContent.value,
       files: selectedFiles.value,
+      fileDates: isLeave ? [...slipDates.value] : undefined,
     })
     receiptCode.value = result.receiptCode
     latestVersion.value = result.version
     showForm.value = false
     confirmation.value = '提交成功，已为你生成回执。'
     selectedFiles.value = []
+    slipDates.value = []
     if (fileInput.value) fileInput.value.value = ''
   })
 }
@@ -155,17 +184,17 @@ onMounted(load)
 
     <article v-else-if="assignment" class="student-paper">
       <header class="student-paper-head">
-        <p class="eyebrow">{{ assignment.type === 'checkin' ? '班级签到' : assignment.type === 'relay' ? '班级接龙' : assignment.type === 'offline' ? '线下完成登记' : '线上作业' }}</p>
+        <p class="eyebrow">{{ assignment.type === 'checkin' ? '班级签到' : assignment.type === 'relay' ? '班级接龙' : assignment.type === 'leave' ? '请假条' : assignment.type === 'offline' ? '线下完成登记' : '线上作业' }}</p>
         <h1>{{ assignment.title }}</h1>
         <p class="assignment-meta">{{ dueLabel(assignment.dueAt) }}</p>
         <p v-if="assignment.instructions" class="assignment-instructions">{{ assignment.instructions }}</p>
       </header>
 
-      <section v-if="assignment.type === 'checkin' || assignment.type === 'relay' || assignment.type === 'online'" class="student-paper-body">
+      <section v-if="assignment.type === 'checkin' || assignment.type === 'relay' || assignment.type === 'online' || assignment.type === 'leave'" class="student-paper-body">
         <form v-if="showForm" @submit.prevent="assignment.type === 'checkin' ? checkIn() : assignment.type === 'relay' ? joinRelay() : submitOnline()">
           <label class="field-block">
             <span>姓名</span>
-            <input v-model="studentName" aria-label="姓名" name="studentName" autocomplete="name" placeholder="请输入姓名" :required="assignment.type === 'online'" />
+            <input v-model="studentName" aria-label="姓名" name="studentName" autocomplete="name" placeholder="请输入姓名" :required="assignment.type === 'online' || assignment.type === 'leave'" />
             <small>系统会按班级名单自动匹配你的学号。</small>
           </label>
 
@@ -182,6 +211,22 @@ onMounted(load)
               <li v-for="file in selectedFiles" :key="`${file.name}-${file.size}`">{{ file.name }} <small>{{ (file.size / 1024 / 1024).toFixed(1) }} MB</small></li>
             </ul>
           </label>
+
+          <div v-if="assignment.type === 'leave'" class="field-block file-field">
+            <span>上传假条</span>
+            <input ref="fileInput" type="file" :accept="fileAccept" multiple @change="onFileChange" />
+            <small>可一次上传多张假条，每张单独选择请假日期，最多 {{ maxFileCount }} 张，每张不超过 {{ maxFileSizeMB }} MB</small>
+            <ul v-if="selectedFiles.length" class="file-list slip-list">
+              <li v-for="(file, index) in selectedFiles" :key="`${file.name}-${file.size}`" class="slip-row">
+                <span class="slip-name" :title="file.name">{{ file.name }} <small>{{ (file.size / 1024 / 1024).toFixed(1) }} MB</small></span>
+                <label class="slip-date">
+                  <span>请假日期</span>
+                  <input v-model="slipDates[index]" type="date" :max="todayISO()" required aria-label="请假日期" />
+                </label>
+                <button class="button quiet slip-remove" type="button" @click="removeSlipFile(index)">移除</button>
+              </li>
+            </ul>
+          </div>
 
           <label v-if="assignment.type === 'relay'" class="field-block">
             <span>接龙内容 <small>选填</small></span>

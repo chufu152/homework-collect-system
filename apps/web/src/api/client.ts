@@ -298,12 +298,13 @@ export const api = {
   feedback: (submissionId: string, payload: { score?: number; feedbackText: string }) => request<unknown>(`/submissions/${encodeURIComponent(submissionId)}/feedback`, { method: 'PATCH', body: JSON.stringify(payload) }),
   setCompletion: (assignmentId: string, studentId: string, completed: boolean) => request<unknown>(`/assignments/${encodeURIComponent(assignmentId)}/completions/${encodeURIComponent(studentId)}`, { method: 'PUT', body: JSON.stringify({ completed }) }),
   getPublicAssignment: (shareCode: string) => request<PublicAssignment>(`/public/assignments/${encodeURIComponent(shareCode)}`),
-  submitAssignment: (shareCode: string, payload: { studentNo?: string; studentName: string; textContent: string; files: File[] }) => {
+  submitAssignment: (shareCode: string, payload: { studentNo?: string; studentName: string; textContent: string; files: File[]; fileDates?: string[] }) => {
     const form = new FormData()
     if (payload.studentNo) form.set('studentNo', payload.studentNo)
     form.set('studentName', payload.studentName)
     form.set('textContent', payload.textContent)
     payload.files.forEach((file) => form.append('files', file, file.name))
+    if (payload.fileDates?.length) form.set('fileDates', JSON.stringify(payload.fileDates))
     return request<{ submissionId: string; receiptCode: string; version: number; submittedAt: string; files: Array<{ id: string }> }>(`/public/assignments/${encodeURIComponent(shareCode)}/submissions`, { method: 'POST', body: form })
   },
   checkIn: (shareCode: string, payload: { studentNo?: string; studentName?: string }) => request<{ displayName: string; checkedInAt: string; alreadyCheckedIn: boolean }>(`/public/assignments/${encodeURIComponent(shareCode)}/check-ins`, { method: 'POST', body: JSON.stringify(payload) }),
@@ -342,7 +343,7 @@ export const api = {
 export interface AssignmentListItem {
   id: string
   title: string
-  type: 'online' | 'offline' | 'checkin' | 'relay'
+  type: 'online' | 'offline' | 'checkin' | 'relay' | 'leave'
   state: 'draft' | 'published' | 'closed'
   dueAt: string | null
   expectedCount: number
@@ -363,7 +364,7 @@ export interface AssignmentDashboard {
     status: string
     submittedAt: string | null
     textContent: string
-    files: Array<{ id: string; originalName: string; sizeBytes: number }>
+    files: Array<{ id: string; originalName: string; sizeBytes: number; slipDate?: string | null }>
     score: number | null
     feedbackText: string | null
   }>
@@ -387,6 +388,7 @@ export interface SubmissionVersionFile {
   originalName: string
   contentType: string
   sizeBytes: number
+  slipDate?: string | null
 }
 
 export interface SubmissionVersion {

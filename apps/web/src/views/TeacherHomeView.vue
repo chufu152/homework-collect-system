@@ -20,7 +20,7 @@ const totals = computed(() => ({
 }))
 
 const typeName: Record<AssignmentListItem['type'], string> = {
-  online: '线上作业', offline: '线下登记', checkin: '签到', relay: '接龙',
+  online: '线上作业', offline: '线下登记', checkin: '签到', relay: '接龙', leave: '假条',
 }
 
 function dueText(value: string | null): string {

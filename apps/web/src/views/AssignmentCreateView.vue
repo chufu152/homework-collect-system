@@ -35,6 +35,7 @@ const typeLabels: Record<AssignmentType, { title: string; description: string }>
   offline: { title: '线下完成', description: '老师在后台点名登记谁已完成。' },
   checkin: { title: '签到', description: '同学通过班级分享页签到。' },
   relay: { title: '接龙', description: '同学按顺序加入接龙名单。' },
+  leave: { title: '假条', description: '同学上传假条并选日期，导出按日期分组。' },
 }
 
 async function loadClass(): Promise<void> {
@@ -84,7 +85,7 @@ async function create(): Promise<void> {
       type: type.value,
       instructions: instructions.value.trim(),
       dueAt: dueLocal.value ? new Date(dueLocal.value).toISOString() : null,
-      submissionMode: type.value === 'online' ? submissionMode.value : 'text',
+      submissionMode: type.value === 'online' ? submissionMode.value : type.value === 'leave' ? 'file' : 'text',
       target: {
         mode: targetMode.value,
         ...(targetMode.value === 'groups' ? { groupIds: selectedGroupIds.value } : {}),

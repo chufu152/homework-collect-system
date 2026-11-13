@@ -216,7 +216,7 @@ onMounted(load)
           <div class="dashboard-toolbar">
             <div class="copy-field"><input :value="dashboard.assignment.shareUrl" readonly aria-label="学生分享链接" /><button class="button secondary" type="button" @click="copyText(dashboard.assignment.shareUrl, '分享链接已复制。')">复制链接</button></div>
             <button class="button secondary" type="button" @click="copyText(dashboard.missingMentionText || '全部完成', '未完成名单已复制。')">复制未完成名单</button>
-            <button v-if="dashboard.assignment.type === 'online'" class="button secondary" type="button" :disabled="isBusy('export:zip:')" @click="exportFile('zip')">{{ isBusy('export:zip:') ? '正在导出…' : '导出提交文件 ZIP' }}</button>
+            <button v-if="dashboard.assignment.type === 'online' || dashboard.assignment.type === 'leave'" class="button secondary" type="button" :disabled="isBusy('export:zip:')" @click="exportFile('zip')">{{ isBusy('export:zip:') ? '正在导出…' : '导出提交文件 ZIP' }}</button>
             <button class="button secondary" type="button" :disabled="isBusy('export:csv:')" @click="exportFile('csv')">{{ isBusy('export:csv:') ? '正在导出…' : '导出名单 CSV' }}</button>
             <button v-if="dashboard.assignment.state === 'draft'" class="button primary" type="button" :disabled="saving" @click="changeState('published')">发布</button>
             <button v-if="dashboard.assignment.state === 'published'" class="button danger" type="button" :disabled="saving" @click="changeState('closed')">停止收取</button>
@@ -230,7 +230,7 @@ onMounted(load)
 
         <section class="surface student-table-wrap" style="overflow:auto">
           <table class="student-table">
-            <thead><tr><th>学生</th><th>状态</th><th>提交时间</th><th v-if="dashboard.assignment.type === 'online'">分数与反馈</th></tr></thead>
+            <thead><tr><th>学生</th><th>状态</th><th>提交时间</th><th v-if="dashboard.assignment.type === 'online' || dashboard.assignment.type === 'leave'">提交内容</th></tr></thead>
             <tbody>
               <tr v-for="student in dashboard.items" :key="student.studentId">
                 <td><strong>{{ student.name }}</strong><span class="student-number">　{{ student.studentNo }}</span></td>
@@ -239,14 +239,14 @@ onMounted(load)
                   <span v-else class="status-pill" :class="student.status === 'missing' ? '' : 'published'">{{ statusName[student.status] ?? student.status }}</span>
                 </td>
                 <td>{{ submittedAt(student.submittedAt) }}</td>
-                <td v-if="dashboard.assignment.type === 'online'">
-                  <form v-if="student.submissionId && feedbackDrafts[student.submissionId]" class="feedback-form" @submit.prevent="saveFeedback(student.submissionId)">
+                <td v-if="dashboard.assignment.type === 'online' || dashboard.assignment.type === 'leave'">
+                  <form v-if="dashboard.assignment.type === 'online' && student.submissionId && feedbackDrafts[student.submissionId]" class="feedback-form" @submit.prevent="saveFeedback(student.submissionId)">
                     <input v-model="feedbackDrafts[student.submissionId].score" type="number" min="0" max="100" step="1" aria-label="分数" placeholder="分" @input="feedbackDirty[student.submissionId] = true" />
                     <input v-model="feedbackDrafts[student.submissionId].feedbackText" maxlength="5000" aria-label="教师反馈" placeholder="写反馈" @input="feedbackDirty[student.submissionId] = true" />
                     <button class="button secondary" type="submit" :disabled="isBusy('feedback:' + student.submissionId)">{{ feedbackSaved === student.submissionId ? '已保存' : '保存反馈' }}</button>
                   </form>
-                  <div v-else-if="!student.submissionId" class="muted-copy">尚未提交</div>
-                  <p v-if="student.submissionId && student.score == null && !student.feedbackText" class="field-note">尚未批改；填写分数或反馈后保存即可。</p>
+                  <div v-else-if="dashboard.assignment.type === 'online' && !student.submissionId" class="muted-copy">尚未提交</div>
+                  <p v-if="dashboard.assignment.type === 'online' && student.submissionId && student.score == null && !student.feedbackText" class="field-note">尚未批改；填写分数或反馈后保存即可。</p>
                   <details v-if="student.submissionId && (student.textContent || student.files.length)" class="submission-detail">
                     <summary>查看提交内容</summary>
                     <pre v-if="student.textContent" class="submission-text">{{ student.textContent }}</pre>
@@ -254,7 +254,7 @@ onMounted(load)
                     <ul v-if="student.files.length" class="submission-files">
                       <li v-for="file in student.files" :key="file.id">
                         <button class="button quiet" type="button" :disabled="isBusy('download:' + student.submissionId + ':' + file.id)" @click="downloadSubmissionFile(student.submissionId, file.id)">{{ isBusy('download:' + student.submissionId + ':' + file.id) ? '正在下载…' : file.originalName }}</button>
-                        <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB</small>
+                        <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB<template v-if="file.slipDate"> · 请假日期 {{ file.slipDate.slice(0, 10) }}</template></small>
                       </li>
                     </ul>
                   </details>
@@ -268,12 +268,12 @@ onMounted(load)
                       <ul v-if="version.files.length" class="submission-files">
                         <li v-for="file in version.files" :key="file.id">
                           <button class="button quiet" type="button" :disabled="isBusy('download:' + student.submissionId + ':' + file.id)" @click="downloadSubmissionFile(student.submissionId, file.id)">{{ isBusy('download:' + student.submissionId + ':' + file.id) ? '正在下载…' : file.originalName }}</button>
-                          <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB</small>
+                          <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB<template v-if="file.slipDate"> · 请假日期 {{ file.slipDate.slice(0, 10) }}</template></small>
                         </li>
                       </ul>
                     </div>
                   </div>
-                  <button v-if="student.submissionId" class="button quiet" type="button" :disabled="isBusy('export:docx:' + student.submissionId)" @click="exportFile('docx', student.submissionId)">{{ isBusy('export:docx:' + student.submissionId) ? '正在导出…' : '导出 Word' }}</button>
+                  <button v-if="dashboard.assignment.type === 'online' && student.submissionId" class="button quiet" type="button" :disabled="isBusy('export:docx:' + student.submissionId)" @click="exportFile('docx', student.submissionId)">{{ isBusy('export:docx:' + student.submissionId) ? '正在导出…' : '导出 Word' }}</button>
                 </td>
               </tr>
             </tbody>
@@ -292,7 +292,7 @@ onMounted(load)
               <ul v-if="student.files.length" class="submission-files">
                 <li v-for="file in student.files" :key="file.id">
                   <button class="button quiet" type="button" :disabled="isBusy('download:' + student.submissionId + ':' + file.id)" @click="downloadSubmissionFile(student.submissionId, file.id)">{{ isBusy('download:' + student.submissionId + ':' + file.id) ? '正在下载…' : file.originalName }}</button>
-                  <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB</small>
+                  <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB<template v-if="file.slipDate"> · 请假日期 {{ file.slipDate.slice(0, 10) }}</template></small>
                 </li>
               </ul>
             </details>
@@ -306,7 +306,7 @@ onMounted(load)
                 <ul v-if="version.files.length" class="submission-files">
                   <li v-for="file in version.files" :key="file.id">
                     <button class="button quiet" type="button" :disabled="isBusy('download:' + student.submissionId + ':' + file.id)" @click="downloadSubmissionFile(student.submissionId, file.id)">{{ isBusy('download:' + student.submissionId + ':' + file.id) ? '正在下载…' : file.originalName }}</button>
-                    <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB</small>
+                    <small>{{ (file.sizeBytes / 1024).toFixed(1) }} KB<template v-if="file.slipDate"> · 请假日期 {{ file.slipDate.slice(0, 10) }}</template></small>
                   </li>
                 </ul>
               </div>

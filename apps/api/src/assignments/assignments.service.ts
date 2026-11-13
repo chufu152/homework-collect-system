@@ -136,9 +136,9 @@ export class AssignmentsService {
         type: input.type,
         instructions: input.instructions?.trim() ?? '',
         dueAt: input.dueAt ? new Date(input.dueAt) : null,
-        submissionMode: input.type === 'online' ? input.submissionMode ?? 'both' : 'text',
+        submissionMode: input.type === 'online' ? input.submissionMode ?? 'both' : input.type === 'leave' ? 'file' : 'text',
         allowedTypes,
-        maxFileCount: input.maxFileCount ?? 5,
+        maxFileCount: input.maxFileCount ?? (input.type === 'leave' ? 20 : 5),
         maxFileBytes: (input.maxFileSizeMB ?? 20) * 1024 * 1024,
         shareCode: randomBytes(24).toString('base64url'),
         state: publishNow ? 'published' : 'draft',
@@ -191,9 +191,30 @@ export class AssignmentsService {
     }
   }
 
-  async submit(shareCode: string, input: StudentLookupDto & { textContent?: string }, files: Express.Multer.File[]) {
+  async submit(shareCode: string, input: StudentLookupDto & { textContent?: string; fileDates?: string }, files: Express.Multer.File[]) {
     const assignment = await this.publicAssignment(shareCode)
-    if (assignment.type !== 'online') throw new BadRequestException('This assignment does not accept online submissions.')
+    if (assignment.type !== 'online' && assignment.type !== 'leave') {
+      throw new BadRequestException('This assignment does not accept online submissions.')
+    }
+    // 假条：每张假条单独选择日期，与文件顺序一一对应（JSON 数组字符串）。
+    const slipDates: Array<Date | null> = []
+    if (assignment.type === 'leave') {
+      let parsed: unknown
+      try {
+        parsed = input.fileDates ? JSON.parse(input.fileDates) : undefined
+      } catch {
+        throw new BadRequestException('请假日期格式不正确，请重新选择日期后再提交。')
+      }
+      if (!Array.isArray(parsed) || parsed.length !== files.length) {
+        throw new BadRequestException('请为每张假条选择日期。')
+      }
+      for (const value of parsed) {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime())) {
+          throw new BadRequestException('请假日期格式不正确，请重新选择日期后再提交。')
+        }
+        slipDates.push(new Date(`${value}T00:00:00.000Z`))
+      }
+    }
     const roster = await this.prisma.student.findMany({
       where: { id: { in: assignment.targets.map((target) => target.studentId) } },
       select: { id: true, studentNo: true, name: true },
@@ -219,9 +240,9 @@ export class AssignmentsService {
       throw new BadRequestException('Enter text or choose a file before submitting.')
     }
 
-    const stored: Array<{ storageKey: string; originalName: string; contentType: string; sizeBytes: number }> = []
+    const stored: Array<{ storageKey: string; originalName: string; contentType: string; sizeBytes: number; slipDate: Date | null }> = []
     try {
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         const storageKey = this.storage.makeObjectKey(assignment.id, student.id, file.originalname)
         await this.storage.save(storageKey, file)
         stored.push({
@@ -229,6 +250,7 @@ export class AssignmentsService {
           originalName: safeDownloadName(file.originalname),
           contentType: file.mimetype,
           sizeBytes: file.size,
+          slipDate: slipDates[index] ?? null,
         })
       }
       const current = await this.prisma.submission.findUnique({
@@ -293,7 +315,7 @@ export class AssignmentsService {
             versions: {
               orderBy: { version: 'desc' },
               take: 1,
-              include: { files: { select: { id: true, originalName: true, sizeBytes: true } } },
+              include: { files: { select: { id: true, originalName: true, sizeBytes: true, slipDate: true } } },
             },
           },
         },
@@ -318,7 +340,8 @@ export class AssignmentsService {
     const items = targets.map((student) => {
       const submission = submissions.get(student.id)
       const onlineStatus = getSubmissionStatus(submission?.submittedAt ?? null, assignment.dueAt)
-      const status = assignment.type === 'online' ? onlineStatus
+      const countsAsOnline = assignment.type === 'online' || assignment.type === 'leave'
+      const status = countsAsOnline ? onlineStatus
         : assignment.type === 'offline' ? completions.has(student.id) ? 'completed' : 'missing'
           : assignment.type === 'checkin' ? checkedIn.has(student.id) ? 'checked_in' : 'missing'
             : relayed.has(student.id) ? 'joined' : 'missing'
@@ -348,9 +371,9 @@ export class AssignmentsService {
       },
       summary: {
         expected: targets.length,
-        submitted: assignment.type === 'online' ? summary.submitted : completedCount,
-        missing: assignment.type === 'online' ? summary.missing : items.filter((item) => item.status === 'missing').length,
-        late: assignment.type === 'online' ? summary.late : 0,
+        submitted: assignment.type === 'online' || assignment.type === 'leave' ? summary.submitted : completedCount,
+        missing: assignment.type === 'online' || assignment.type === 'leave' ? summary.missing : items.filter((item) => item.status === 'missing').length,
+        late: assignment.type === 'online' || assignment.type === 'leave' ? summary.late : 0,
       },
       items,
       missingMentionText: formatMissingMentions(missingNames),
