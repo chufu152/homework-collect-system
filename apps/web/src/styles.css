@@ -359,7 +359,15 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
 .form-file-current { margin: 6px 0 0; font-size: 12px; color: #34494d; overflow-wrap: anywhere; }
 
 @media (min-width: 761px) {
-  .form-sheet { grid-template-columns: repeat(var(--form-cols, 3), minmax(110px, 1fr)); }
+  /* 电脑端：两行表——第一行全是字段名、第二行全是输入框，每列一个字段（按列填充）。 */
+  .form-sheet {
+    grid-template-columns: repeat(var(--form-cols, 3), minmax(110px, 1fr));
+    grid-template-rows: auto auto;
+    grid-auto-flow: column;
+  }
+  /* 按列填充后四角易位：右上角是最后一个字段名，左下角是第一个输入框。 */
+  .form-sheet > :nth-child(2), .form-sheet > :nth-child(2) > .form-sheet-input { border-top-right-radius: 0; border-bottom-left-radius: 11px; }
+  .form-sheet > :nth-last-child(2), .form-sheet > :nth-last-child(2) > .form-sheet-input { border-bottom-left-radius: 0; border-top-right-radius: 11px; }
 }
 @media (max-width: 760px) {
   /* 手机端：字段名列自适应宽度并允许换行，输入列吃满剩余空间，杜绝文字截断。 */
