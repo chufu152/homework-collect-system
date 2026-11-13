@@ -400,6 +400,48 @@ it('renders the form sheet and submits one row for a first-time form fill', asyn
     })
   })
 
+  it('auto-fills identity fields when the top name matches the roster', async () => {
+    api.getPublicAssignment.mockResolvedValue({
+      id: 'assignment-12',
+      title: '点名表',
+      type: 'form',
+      instructions: '',
+      state: 'published',
+      form: {
+        fields: [
+          { name: '学号', type: 'studentNo', required: true },
+          { name: '姓名', type: 'name', required: true },
+        ],
+        primaryKey: '学号',
+        sortField: null,
+        sortDir: 'asc',
+      },
+    })
+    api.getFormRoster.mockResolvedValue([
+      { studentNo: '202502110201', name: '李一鸣' },
+      { studentNo: '202502110203', name: '陈凤迪' },
+    ])
+    api.getFormRecord.mockResolvedValue({ record: null })
+    api.submitForm.mockResolvedValue({ receiptCode: 'r-4', version: 1, updated: false, submittedAt: '2026-11-13T05:00:00.000Z' })
+    const wrapper = mount(StudentAssignmentView, {
+      props: { shareCode: 'share-code' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    const sheet = wrapper.get('.form-sheet')
+    // 顶部姓名与名单唯一匹配：学号/姓名字段自动填充，无需手动下拉。
+    await wrapper.get('[aria-label="姓名"]').setValue('陈凤迪')
+    await flushPromises()
+    expect((sheet.get('#form-field-0').element as HTMLInputElement).value).toBe('202502110203')
+    expect((sheet.get('#form-field-1').element as HTMLInputElement).value).toBe('陈凤迪')
+
+    // 名单里没有的名字：不填充，保持空值。
+    await wrapper.get('[aria-label="姓名"]').setValue('路人甲')
+    await flushPromises()
+    expect((sheet.get('#form-field-0').element as HTMLInputElement).value).toBe('202502110203')
+  })
+
   it('formats the chosen date with the configured date style', async () => {
     api.getPublicAssignment.mockResolvedValue({
       id: 'assignment-11',

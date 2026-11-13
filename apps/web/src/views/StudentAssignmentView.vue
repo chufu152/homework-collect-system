@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api, type FormFieldConfig, type PublicAssignment } from '../api/client'
 import { describeError } from '../api/error-messages'
 
@@ -214,6 +214,21 @@ function dropdownOptions(field: FormFieldConfig): Array<{ studentNo: string; nam
 function toggleDropdown(fieldName: string): void {
   openDropdown.value = openDropdown.value === fieldName ? '' : fieldName
 }
+
+/** 顶部姓名与名单唯一精确匹配时，自动填充表单里的学号/姓名字段（名单是权威来源，直接覆盖）。 */
+function autoMatchIdentityFields(): void {
+  const name = studentName.value.trim()
+  if (!name) return
+  const matches = formRoster.value.filter((row) => row.name === name)
+  if (matches.length !== 1) return
+  const row = matches[0]
+  for (const field of formFields.value) {
+    if (field.type === 'name') formValues.value[field.name] = row.name
+    else if (field.type === 'studentNo') formValues.value[field.name] = row.studentNo
+  }
+}
+// 名单是异步加载的：姓名变化或名单到达时都要尝试匹配一次。
+watch([studentName, formRoster], autoMatchIdentityFields)
 
 function pickRosterOption(field: FormFieldConfig, option: { studentNo: string; name: string }): void {
   formValues.value[field.name] = field.type === 'studentNo' ? option.studentNo : option.name
