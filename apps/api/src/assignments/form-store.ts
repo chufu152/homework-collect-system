@@ -17,6 +17,9 @@ export type FormDateStyle = 'long' | 'medium' | 'short' | 'custom'
 /** 数字字段的格式：小数（默认，允许小数点）/ 整数（只允许整数）。 */
 export type FormNumberKind = 'decimal' | 'integer'
 
+/** 学号字段的格式：完整（默认）/ 后六位 / 后两位。 */
+export type FormStudentNoStyle = 'full' | 'last6' | 'last2'
+
 export interface FormField {
   name: string
   type: FormFieldType
@@ -25,6 +28,8 @@ export interface FormField {
   dateStyle?: FormDateStyle
   /** 仅 number 类型使用；缺省视为 decimal。 */
   numberKind?: FormNumberKind
+  /** 仅 studentNo 类型使用；缺省视为 full。 */
+  studentNoStyle?: FormStudentNoStyle
 }
 
 export interface FormConfig {
@@ -48,6 +53,14 @@ const IDENTITY_NAME = '姓名'
 const FIELD_TYPES: readonly FormFieldType[] = ['studentNo', 'name', 'date', 'number', 'text', 'file']
 const DATE_STYLES: readonly FormDateStyle[] = ['long', 'medium', 'short', 'custom']
 const NUMBER_KINDS: readonly FormNumberKind[] = ['decimal', 'integer']
+const STUDENT_NO_STYLES: readonly FormStudentNoStyle[] = ['full', 'last6', 'last2']
+
+/** 按配置格式化学号：完整 / 后六位 / 后两位。 */
+export function formatStudentNo(studentNo: string, style?: FormStudentNoStyle): string {
+  if (style === 'last6') return studentNo.slice(-6)
+  if (style === 'last2') return studentNo.slice(-2)
+  return studentNo
+}
 
 /** 每个作业一把进程内写锁，避免并发读改写同一个数据文件。 */
 const locks = new Map<string, Promise<unknown>>()
@@ -83,6 +96,9 @@ export function validateFormConfig(config: FormConfig): string | null {
     if (field.type === 'number' && field.numberKind !== undefined && !NUMBER_KINDS.includes(field.numberKind)) {
       return `字段「${name}」的数字格式不正确。`
     }
+    if (field.type === 'studentNo' && field.studentNoStyle !== undefined && !STUDENT_NO_STYLES.includes(field.studentNoStyle)) {
+      return `字段「${name}」的学号格式不正确。`
+    }
     seen.add(name)
     field.name = name
     field.required = field.required === true
@@ -90,6 +106,8 @@ export function validateFormConfig(config: FormConfig): string | null {
     else delete field.dateStyle
     if (field.type === 'number') field.numberKind = field.numberKind ?? 'decimal'
     else delete field.numberKind
+    if (field.type === 'studentNo') field.studentNoStyle = field.studentNoStyle ?? 'full'
+    else delete field.studentNoStyle
   }
   if (!seen.has(config.primaryKey)) return '主键必须从表单字段中选择。'
   if (config.sortField && !seen.has(config.sortField)) return '排序依据必须从表单字段中选择。'
@@ -128,7 +146,7 @@ export function validateFormValues(
     const raw = input[field.name]
     if (raw !== undefined && typeof raw !== 'string') return `字段「${field.name}」的填写格式不正确。`
     let value = sanitizeCell(typeof raw === 'string' ? raw : '')
-    if (field.type === 'studentNo') value = sanitizeCell(identity.studentNo)
+    if (field.type === 'studentNo') value = sanitizeCell(formatStudentNo(identity.studentNo, field.studentNoStyle))
     else if (field.type === 'name') value = sanitizeCell(identity.name)
     else if (field.type === 'file') {
       value = sanitizeCell(fileNames[field.name] ?? previousValues[field.name] ?? '')

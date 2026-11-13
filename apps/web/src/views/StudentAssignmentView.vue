@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { api, type FormFieldConfig, type PublicAssignment } from '../api/client'
+import { api, formatStudentNo, type FormFieldConfig, type PublicAssignment } from '../api/client'
 import { describeError } from '../api/error-messages'
 
 const props = defineProps<{ shareCode: string }>()
@@ -200,14 +200,20 @@ async function loadMyFormRecord(): Promise<void> {
 
 // ---- 表单作业：字段交互 ----
 
-/** 学号/姓名字段的候选：按当前输入收窄（同时匹配另一列做提示）。 */
+/** 学号字段按配置格式化后的值（完整/后六位/后两位）。 */
+function fieldStudentNo(field: FormFieldConfig, studentNo: string): string {
+  return formatStudentNo(studentNo, field.studentNoStyle)
+}
+
+/** 学号/姓名字段的候选：按当前输入收窄（同时匹配另一列与完整学号做提示）。 */
 function dropdownOptions(field: FormFieldConfig): Array<{ studentNo: string; name: string }> {
   const query = String(formValues.value[field.name] ?? '').trim()
   return formRoster.value.filter((row) => {
     if (!query) return true
-    const primary = field.type === 'studentNo' ? row.studentNo : row.name
-    const other = field.type === 'studentNo' ? row.name : row.studentNo
-    return primary.includes(query) || other.includes(query)
+    if (field.type === 'studentNo') {
+      return fieldStudentNo(field, row.studentNo).includes(query) || row.studentNo.includes(query) || row.name.includes(query)
+    }
+    return row.name.includes(query) || row.studentNo.includes(query)
   })
 }
 
@@ -224,14 +230,14 @@ function autoMatchIdentityFields(): void {
   const row = matches[0]
   for (const field of formFields.value) {
     if (field.type === 'name') formValues.value[field.name] = row.name
-    else if (field.type === 'studentNo') formValues.value[field.name] = row.studentNo
+    else if (field.type === 'studentNo') formValues.value[field.name] = fieldStudentNo(field, row.studentNo)
   }
 }
 // 名单是异步加载的：姓名变化或名单到达时都要尝试匹配一次。
 watch([studentName, formRoster], autoMatchIdentityFields)
 
 function pickRosterOption(field: FormFieldConfig, option: { studentNo: string; name: string }): void {
-  formValues.value[field.name] = field.type === 'studentNo' ? option.studentNo : option.name
+  formValues.value[field.name] = field.type === 'studentNo' ? fieldStudentNo(field, option.studentNo) : option.name
   openDropdown.value = ''
 }
 
@@ -473,7 +479,7 @@ onMounted(load)
                   <li v-if="!dropdownOptions(field).length" class="form-dd-empty">没有匹配的选项</li>
                   <li v-for="option in dropdownOptions(field)" :key="option.studentNo">
                     <button type="button" @mousedown.prevent="pickRosterOption(field, option)">
-                      <strong>{{ field.type === 'studentNo' ? option.studentNo : option.name }}</strong>
+                      <strong>{{ field.type === 'studentNo' ? fieldStudentNo(field, option.studentNo) : option.name }}</strong>
                       <span>{{ field.type === 'studentNo' ? option.name : option.studentNo }}</span>
                     </button>
                   </li>

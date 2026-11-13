@@ -136,6 +136,19 @@ describe('form value validation', () => {
     expect(sorted.map((row) => row.studentNo)).toEqual(['S02', 'S01', 'S03'])
   })
 
+  it('formats studentNo fields by the configured style', () => {
+    const rosterIdentity = { studentNo: '202502110224', name: '杨骐豪' }
+    const fullConfig: FormConfig = { ...config, fields: [{ name: '学号', type: 'studentNo', required: true, studentNoStyle: 'full' }], primaryKey: '学号' }
+    expect((validateFormValues(fullConfig, {}, rosterIdentity) as Record<string, string>)['学号']).toBe('202502110224')
+    const last6Config: FormConfig = { ...config, fields: [{ name: '学号', type: 'studentNo', required: true, studentNoStyle: 'last6' }], primaryKey: '学号' }
+    expect((validateFormValues(last6Config, {}, rosterIdentity) as Record<string, string>)['学号']).toBe('110224')
+    const last2Config: FormConfig = { ...config, fields: [{ name: '学号', type: 'studentNo', required: true, studentNoStyle: 'last2' }], primaryKey: '学号' }
+    expect((validateFormValues(last2Config, {}, rosterIdentity) as Record<string, string>)['学号']).toBe('24')
+    // 缺省视为完整学号；非法格式被拒绝。
+    expect((validateFormValues({ ...config, fields: [{ name: '学号', type: 'studentNo', required: true }], primaryKey: '学号' }, {}, rosterIdentity) as Record<string, string>)['学号']).toBe('202502110224')
+    expect(validateFormConfig({ ...config, fields: [{ name: '学号', type: 'studentNo', required: true, studentNoStyle: 'last3' as never }], primaryKey: '学号' })).toContain('学号格式不正确')
+  })
+
   it('overrides identity fields with server-side roster values and keeps files', () => {
     const identityConfig: FormConfig = {
       fields: [

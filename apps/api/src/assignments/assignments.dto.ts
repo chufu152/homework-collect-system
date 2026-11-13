@@ -38,6 +38,11 @@ export class FormFieldDto {
   @IsOptional()
   @IsIn(['decimal', 'integer'])
   numberKind?: 'decimal' | 'integer'
+
+  /** 仅 studentNo 类型：完整（默认）/ 后六位 / 后两位。 */
+  @IsOptional()
+  @IsIn(['full', 'last6', 'last2'])
+  studentNoStyle?: 'full' | 'last6' | 'last2'
 }
 
 /** 表单作业的字段配置（Access 式建表：字段 + 主键 + 排序依据）。 */

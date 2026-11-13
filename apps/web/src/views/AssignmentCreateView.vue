@@ -58,6 +58,12 @@ const numberKindLabels: Array<{ value: NonNullable<FormFieldConfig['numberKind']
   { value: 'integer', label: '整数（不允许小数点）' },
 ]
 
+const studentNoStyleLabels: Array<{ value: NonNullable<FormFieldConfig['studentNoStyle']>; label: string }> = [
+  { value: 'full', label: '完整学号（202502110224）' },
+  { value: 'last6', label: '后六位（110224）' },
+  { value: 'last2', label: '后两位（24）' },
+]
+
 function addFormField(): void {
   if (formFields.value.length >= 30) return
   formFields.value.push({ key: ++fieldKeySeed, name: '', type: 'text', required: false })
@@ -162,6 +168,7 @@ async function create(): Promise<void> {
             required: field.required,
             ...(field.type === 'date' ? { dateStyle: field.dateStyle ?? 'medium' } : {}),
             ...(field.type === 'number' ? { numberKind: field.numberKind ?? 'decimal' } : {}),
+            ...(field.type === 'studentNo' ? { studentNoStyle: field.studentNoStyle ?? 'full' } : {}),
           })),
           primaryKey: formPrimaryKey.value,
           sortField: formSortField.value || null,
@@ -272,6 +279,12 @@ onMounted(loadClass)
                     <span>数字格式</span>
                     <select v-model="field.numberKind" :aria-label="`${field.name || '未命名'} 数字格式`">
                       <option v-for="kind in numberKindLabels" :key="kind.value" :value="kind.value">{{ kind.label }}</option>
+                    </select>
+                  </div>
+                  <div v-if="field.type === 'studentNo'" class="form-designer-datestyle">
+                    <span>学号格式</span>
+                    <select v-model="field.studentNoStyle" :aria-label="`${field.name || '未命名'} 学号格式`">
+                      <option v-for="style in studentNoStyleLabels" :key="style.value" :value="style.value">{{ style.label }}</option>
                     </select>
                   </div>
                 </template>

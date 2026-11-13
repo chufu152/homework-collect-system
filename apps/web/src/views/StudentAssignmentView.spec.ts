@@ -14,7 +14,12 @@ const { api } = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('../api/client', () => ({ api }))
+vi.mock('../api/client', () => ({
+  api,
+  // 与真实实现一致：按样式截取学号（完整/后六位/后两位）。
+  formatStudentNo: (studentNo: string, style?: string) =>
+    style === 'last6' ? studentNo.slice(-6) : style === 'last2' ? studentNo.slice(-2) : studentNo,
+}))
 import StudentAssignmentView from './StudentAssignmentView.vue'
 
 class FakeApiError extends Error {
@@ -440,6 +445,47 @@ it('renders the form sheet and submits one row for a first-time form fill', asyn
     await wrapper.get('[aria-label="姓名"]').setValue('路人甲')
     await flushPromises()
     expect((sheet.get('#form-field-0').element as HTMLInputElement).value).toBe('202502110203')
+  })
+
+  it('fills the last-2-digit student number when the style is last2', async () => {
+    api.getPublicAssignment.mockResolvedValue({
+      id: 'assignment-13',
+      title: '签到表',
+      type: 'form',
+      instructions: '',
+      state: 'published',
+      form: {
+        fields: [
+          { name: '学号', type: 'studentNo', required: true, studentNoStyle: 'last2' },
+          { name: '姓名', type: 'name', required: true },
+        ],
+        primaryKey: '学号',
+        sortField: null,
+        sortDir: 'asc',
+      },
+    })
+    api.getFormRoster.mockResolvedValue([{ studentNo: '202502110203', name: '陈凤迪' }])
+    api.getFormRecord.mockResolvedValue({ record: null })
+    api.submitForm.mockResolvedValue({ receiptCode: 'r-5', version: 1, updated: false, submittedAt: '2026-11-13T07:00:00.000Z' })
+    const wrapper = mount(StudentAssignmentView, {
+      props: { shareCode: 'share-code' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    const sheet = wrapper.get('.form-sheet')
+    // 顶部填姓名自动匹配：学号填后两位。
+    await wrapper.get('[aria-label="姓名"]').setValue('陈凤迪')
+    await flushPromises()
+    expect((sheet.get('#form-field-0').element as HTMLInputElement).value).toBe('03')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(api.submitForm).toHaveBeenCalledWith('share-code', {
+      studentName: '陈凤迪',
+      values: { 学号: '03', 姓名: '陈凤迪' },
+      files: [],
+    })
   })
 
   it('formats the chosen date with the configured date style', async () => {

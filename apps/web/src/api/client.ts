@@ -375,6 +375,15 @@ export interface FormFieldConfig {
   dateStyle?: 'long' | 'medium' | 'short' | 'custom'
   /** 仅 number 类型：小数（默认）或整数。 */
   numberKind?: 'decimal' | 'integer'
+  /** 仅 studentNo 类型：完整（默认）/ 后六位 / 后两位。 */
+  studentNoStyle?: 'full' | 'last6' | 'last2'
+}
+
+/** 按配置格式化学号：完整 / 后六位 / 后两位（与后端 formatStudentNo 保持一致）。 */
+export function formatStudentNo(studentNo: string, style?: FormFieldConfig['studentNoStyle']): string {
+  if (style === 'last6') return studentNo.slice(-6)
+  if (style === 'last2') return studentNo.slice(-2)
+  return studentNo
 }
 
 export interface FormConfigPayload {
