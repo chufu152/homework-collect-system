@@ -9,6 +9,7 @@ const { api } = vi.hoisted(() => ({
     joinRelay: vi.fn(),
     submitAssignment: vi.fn(),
     getFormRecord: vi.fn(),
+    getFormRoster: vi.fn(),
     submitForm: vi.fn(),
   },
 }))
@@ -328,16 +329,112 @@ it('renders the form sheet and submits one row for a first-time form fill', asyn
     const sheet = wrapper.get('.form-sheet')
     expect(sheet.findAll('.form-sheet-label').map((node) => node.text())).toEqual(['体温*', '症状'])
     await wrapper.get('[aria-label="姓名"]').setValue('张三')
-    await sheet.get('#form-field-体温').setValue('36.5')
-    await sheet.get('#form-field-症状').setValue('无')
+    await sheet.get('#form-field-0').setValue('36.5')
+    await sheet.get('#form-field-1').setValue('无')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
     expect(api.submitForm).toHaveBeenCalledWith('share-code', {
       studentName: '张三',
       values: { 体温: '36.5', 症状: '无' },
+      files: [],
     })
     expect(wrapper.text()).toContain('提交成功，已记录你的一行数据')
+  })
+
+  it('offers roster narrowing dropdowns for studentNo/name fields', async () => {
+    api.getPublicAssignment.mockResolvedValue({
+      id: 'assignment-10',
+      title: '值日登记',
+      type: 'form',
+      instructions: '',
+      state: 'published',
+      form: {
+        fields: [
+          { name: '学号', type: 'studentNo', required: true },
+          { name: '姓名', type: 'name', required: true },
+        ],
+        primaryKey: '学号',
+        sortField: null,
+        sortDir: 'asc',
+      },
+    })
+    api.getFormRoster.mockResolvedValue([
+      { studentNo: '202502110201', name: '李一鸣' },
+      { studentNo: '202502110203', name: '陈凤迪' },
+    ])
+    api.getFormRecord.mockResolvedValue({ record: null })
+    api.submitForm.mockResolvedValue({ receiptCode: 'r-2', version: 1, updated: false, submittedAt: '2026-11-13T05:00:00.000Z' })
+    const wrapper = mount(StudentAssignmentView, {
+      props: { shareCode: 'share-code' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    const sheet = wrapper.get('.form-sheet')
+    // 输入部分学号：候选收窄到一条，另一列显示姓名提示。
+    await sheet.get('#form-field-0').setValue('203')
+    await sheet.get('#form-field-0').trigger('focus')
+    const options = sheet.findAll('.form-dd-list button')
+    expect(options).toHaveLength(1)
+    expect(options[0].text()).toContain('202502110203')
+    expect(options[0].text()).toContain('陈凤迪')
+    await options[0].trigger('mousedown')
+    await flushPromises()
+
+    expect((sheet.get('#form-field-0').element as HTMLInputElement).value).toBe('202502110203')
+    expect(sheet.find('.form-dd-list').exists()).toBe(false)
+
+    // 姓名字段同样可以下拉选。
+    await sheet.get('#form-field-1').trigger('focus')
+    await sheet.findAll('.form-dd-list button').filter((node) => node.text().includes('陈凤迪'))[0].trigger('mousedown')
+    expect((sheet.get('#form-field-1').element as HTMLInputElement).value).toBe('陈凤迪')
+
+    await wrapper.get('[aria-label="姓名"]').setValue('陈凤迪')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(api.submitForm).toHaveBeenCalledWith('share-code', {
+      studentName: '陈凤迪',
+      values: { 学号: '202502110203', 姓名: '陈凤迪' },
+      files: [],
+    })
+  })
+
+  it('formats the chosen date with the configured date style', async () => {
+    api.getPublicAssignment.mockResolvedValue({
+      id: 'assignment-11',
+      title: '请假登记',
+      type: 'form',
+      instructions: '',
+      state: 'published',
+      form: {
+        fields: [{ name: '日期', type: 'date', required: true, dateStyle: 'long' }],
+        primaryKey: '日期',
+        sortField: null,
+        sortDir: 'asc',
+      },
+    })
+    api.getFormRecord.mockResolvedValue({ record: null })
+    api.getFormRoster.mockResolvedValue([])
+    api.submitForm.mockResolvedValue({ receiptCode: 'r-3', version: 1, updated: false, submittedAt: '2026-11-13T05:00:00.000Z' })
+    const wrapper = mount(StudentAssignmentView, {
+      props: { shareCode: 'share-code' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    await wrapper.get('[aria-label="姓名"]').setValue('张三')
+    const dateInput = wrapper.get('input[type="date"]')
+    await dateInput.setValue('2026-11-13')
+    await dateInput.trigger('change')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.submitForm).toHaveBeenCalledWith('share-code', {
+      studentName: '张三',
+      values: { 日期: '2026年11月13日' },
+      files: [],
+    })
   })
 
   it('blocks the submit when a required form field is empty', async () => {

@@ -313,8 +313,25 @@ export const api = {
   },
   /** 表单作业：读取自己已提交的记录用于回显。 */
   getFormRecord: (shareCode: string, payload: { studentNo?: string; studentName: string }) => request<{ record: FormRecord | null }>(`/public/assignments/${encodeURIComponent(shareCode)}/form-record`, { method: 'POST', body: JSON.stringify(payload) }),
-  /** 表单作业：提交/更新自己的表单记录。 */
-  submitForm: (shareCode: string, payload: { studentNo?: string; studentName: string; values: Record<string, string> }) => request<{ receiptCode: string; version: number; updated: boolean; submittedAt: string }>(`/public/assignments/${encodeURIComponent(shareCode)}/form-submissions`, { method: 'POST', body: JSON.stringify(payload) }),
+  /** 表单作业：目标名单，供学号/姓名字段下拉选择。 */
+  getFormRoster: async (shareCode: string) => {
+    const result = await request<unknown>(`/public/assignments/${encodeURIComponent(shareCode)}/form-roster`)
+    if (!isRecord(result) || !Array.isArray(result.roster)) return [] as Array<{ studentNo: string; name: string }>
+    return (result.roster as Array<Record<string, unknown>>)
+      .filter((row) => typeof row.studentNo === 'string' && typeof row.name === 'string')
+      .map((row) => ({ studentNo: row.studentNo as string, name: row.name as string }))
+  },
+  /** 表单作业：提交/更新自己的表单记录（文件字段走 multipart，file__序号 = 文件字段顺序）。 */
+  submitForm: (shareCode: string, payload: { studentNo?: string; studentName: string; values: Record<string, string>; files?: Array<{ fieldIndex: number; file: File }> }) => {
+    const form = new FormData()
+    if (payload.studentNo) form.set('studentNo', payload.studentNo)
+    form.set('studentName', payload.studentName)
+    form.set('values', JSON.stringify(payload.values))
+    for (const entry of payload.files ?? []) {
+      form.append(`file__${entry.fieldIndex}`, entry.file, entry.file.name)
+    }
+    return request<{ receiptCode: string; version: number; updated: boolean; submittedAt: string }>(`/public/assignments/${encodeURIComponent(shareCode)}/form-submissions`, { method: 'POST', body: form })
+  },
   checkIn: (shareCode: string, payload: { studentNo?: string; studentName?: string }) => request<{ displayName: string; checkedInAt: string; alreadyCheckedIn: boolean }>(`/public/assignments/${encodeURIComponent(shareCode)}/check-ins`, { method: 'POST', body: JSON.stringify(payload) }),
   getRelayEntries: async (shareCode: string) => {
     const result = await request<unknown>(`/public/assignments/${encodeURIComponent(shareCode)}/relay-entries`)
@@ -348,10 +365,14 @@ export const api = {
   },
 }
 
+export type FormFieldType = 'studentNo' | 'name' | 'date' | 'number' | 'text' | 'file'
+
 export interface FormFieldConfig {
   name: string
-  type: 'text' | 'number' | 'date'
+  type: FormFieldType
   required: boolean
+  /** 仅 date 类型：长/中/短日期或自定义格式。 */
+  dateStyle?: 'long' | 'medium' | 'short' | 'custom'
 }
 
 export interface FormConfigPayload {

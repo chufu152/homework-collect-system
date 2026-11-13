@@ -167,6 +167,31 @@ export class StorageService {
     await rm(this.resolveFallbackPath(key), { force: true }).catch(() => undefined)
   }
 
+  /** 列出某个前缀下的全部对象 key（主盘 + 暂存合并去重）；s3 驱动暂不支持，返回空。 */
+  async list(prefix: string): Promise<string[]> {
+    if (this.driver === 's3') return []
+    const trimmed = prefix.replace(/\/+$/, '')
+    if (!trimmed) return []
+    const keys = new Set<string>()
+    const walk = async (root: string, dir: string): Promise<void> => {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          await walk(root, full)
+        } else if (entry.isFile()) {
+          const rel = path.relative(root, full)
+          keys.add(rel.split(path.sep).join('/'))
+        }
+      }
+    }
+    const localDir = this.resolveLocalPath(trimmed)
+    const fallbackDir = this.resolveFallbackPath(trimmed)
+    await walk(this.localRoot, localDir)
+    await walk(this.fallbackRoot, fallbackDir)
+    return [...keys].filter((key) => key.startsWith(`${trimmed}/`))
+  }
+
   /**
    * 回收巡检：主盘健康时把暂存目录里的文件搬回教师电脑，搬成功后删掉服务器副本。
    * 目标已存在（上次搬完删失败了）时直接删除本地副本，避免重复占用。

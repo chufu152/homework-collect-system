@@ -22,12 +22,17 @@ export class FormFieldDto {
   name!: string
 
   @IsOptional()
-  @IsIn(['text', 'number', 'date'])
-  type?: 'text' | 'number' | 'date'
+  @IsIn(['studentNo', 'name', 'date', 'number', 'text', 'file'])
+  type?: 'studentNo' | 'name' | 'date' | 'number' | 'text' | 'file'
 
   @IsOptional()
   @IsBoolean()
   required?: boolean
+
+  /** 仅 date 类型：长/中/短日期或自定义格式。 */
+  @IsOptional()
+  @IsIn(['long', 'medium', 'short', 'custom'])
+  dateStyle?: 'long' | 'medium' | 'short' | 'custom'
 }
 
 /** 表单作业的字段配置（Access 式建表：字段 + 主键 + 排序依据）。 */

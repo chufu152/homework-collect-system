@@ -9,12 +9,17 @@ import type { StorageService } from '../storage/storage.service.js'
  * 文件都经过 StorageService 落盘（教师电脑 + 服务器暂存兜底）。
  */
 
-export type FormFieldType = 'text' | 'number' | 'date'
+export type FormFieldType = 'studentNo' | 'name' | 'date' | 'number' | 'text' | 'file'
+
+/** 日期字段的格式：长（2026年11月13日）/ 中（2026-11-13）/ 短（11-13）/ 自定义（自由填写）。 */
+export type FormDateStyle = 'long' | 'medium' | 'short' | 'custom'
 
 export interface FormField {
   name: string
   type: FormFieldType
   required: boolean
+  /** 仅 date 类型使用；缺省视为 medium。 */
+  dateStyle?: FormDateStyle
 }
 
 export interface FormConfig {
@@ -32,8 +37,11 @@ export interface FormRecord {
 
 const MAX_FIELDS = 30
 const MAX_VALUE_LENGTH = 500
+const MAX_FILE_NAME = 200
 const IDENTITY_NO = '学号'
 const IDENTITY_NAME = '姓名'
+const FIELD_TYPES: readonly FormFieldType[] = ['studentNo', 'name', 'date', 'number', 'text', 'file']
+const DATE_STYLES: readonly FormDateStyle[] = ['long', 'medium', 'short', 'custom']
 
 /** 每个作业一把进程内写锁，避免并发读改写同一个数据文件。 */
 const locks = new Map<string, Promise<unknown>>()
@@ -61,12 +69,16 @@ export function validateFormConfig(config: FormConfig): string | null {
   for (const field of config.fields) {
     const name = typeof field.name === 'string' ? field.name.trim() : ''
     if (!name || name.length > 40) return '字段名需为 1-40 个字符。'
-    if (name === IDENTITY_NO || name === IDENTITY_NAME) return `字段名「${name}」是系统保留列名，请换一个。`
     if (seen.has(name)) return `字段名「${name}」重复了。`
-    if (!['text', 'number', 'date'].includes(field.type)) return `字段「${name}」的类型不正确。`
+    if (!FIELD_TYPES.includes(field.type)) return `字段「${name}」的类型不正确。`
+    if (field.type === 'date' && field.dateStyle !== undefined && !DATE_STYLES.includes(field.dateStyle)) {
+      return `字段「${name}」的日期格式不正确。`
+    }
     seen.add(name)
     field.name = name
     field.required = field.required === true
+    if (field.type === 'date') field.dateStyle = field.dateStyle ?? 'medium'
+    else delete field.dateStyle
   }
   if (!seen.has(config.primaryKey)) return '主键必须从表单字段中选择。'
   if (config.sortField && !seen.has(config.sortField)) return '排序依据必须从表单字段中选择。'
@@ -74,20 +86,50 @@ export function validateFormConfig(config: FormConfig): string | null {
   return null
 }
 
-/** 校验一份提交值；返回错误文案或 null。 */
-export function validateFormValues(config: FormConfig, rawValues: unknown): Record<string, string> | string {
+/** 日期格式校验：长/中/短有固定格式，自定义只要非空即可。 */
+function isValidDateValue(style: FormDateStyle, value: string): boolean {
+  if (style === 'long') return /^\d{4}年\d{1,2}月\d{1,2}日$/.test(value)
+  if (style === 'medium') return /^\d{4}-\d{2}-\d{2}$/.test(value)
+  if (style === 'short') return /^\d{1,2}-\d{1,2}$/.test(value)
+  return true
+}
+
+export const DATE_STYLE_HINT: Record<FormDateStyle, string> = {
+  long: '2026年11月13日',
+  medium: '2026-11-13',
+  short: '11-13',
+  custom: '按老师要求的格式',
+}
+
+/** 校验一份提交值；返回错误文案或整理后的值映射。
+ * 身份列（学号/姓名）以服务端名单为准覆盖；文件列没有新文件时保留原有值。 */
+export function validateFormValues(
+  config: FormConfig,
+  rawValues: unknown,
+  identity: { studentNo: string; name: string },
+  fileNames: Record<string, string> = {},
+  previousValues: Record<string, string> = {},
+): Record<string, string> | string {
   if (typeof rawValues !== 'object' || rawValues === null || Array.isArray(rawValues)) return '表单数据格式不正确。'
   const values: Record<string, string> = {}
   const input = rawValues as Record<string, unknown>
   for (const field of config.fields) {
     const raw = input[field.name]
     if (raw !== undefined && typeof raw !== 'string') return `字段「${field.name}」的填写格式不正确。`
-    const value = sanitizeCell(typeof raw === 'string' ? raw : '')
+    let value = sanitizeCell(typeof raw === 'string' ? raw : '')
+    if (field.type === 'studentNo') value = sanitizeCell(identity.studentNo)
+    else if (field.type === 'name') value = sanitizeCell(identity.name)
+    else if (field.type === 'file') {
+      value = sanitizeCell(fileNames[field.name] ?? previousValues[field.name] ?? '')
+      if (value.length > MAX_FILE_NAME) value = value.slice(-MAX_FILE_NAME)
+    }
     if (field.required && !value) return `请填写「${field.name}」。`
     if (value.length > MAX_VALUE_LENGTH) return `「${field.name}」的内容不能超过 ${MAX_VALUE_LENGTH} 字。`
     if (value) {
       if (field.type === 'number' && !/^-?\d+(\.\d+)?$/.test(value)) return `「${field.name}」需要填写数字。`
-      if (field.type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return `「${field.name}」需要按 日期（年-月-日）格式填写。`
+      if (field.type === 'date' && !isValidDateValue(field.dateStyle ?? 'medium', value)) {
+        return `「${field.name}」需要按 ${DATE_STYLE_HINT[field.dateStyle ?? 'medium']} 格式填写。`
+      }
     }
     values[field.name] = value
   }
@@ -100,6 +142,17 @@ function configKey(assignmentId: string): string {
 
 function dataKey(assignmentId: string): string {
   return `form-data/${assignmentId}.tsv`
+}
+
+export function formFilesPrefix(assignmentId: string): string {
+  return `form-files/${assignmentId}/`
+}
+
+/** 文件字段附件的存储 key（确定性规则：重复提交同名覆盖，无需查旧记录即可删除）。 */
+export function formFileKey(assignmentId: string, studentNo: string, fieldName: string, fileName: string): string {
+  const safeField = fieldName.replace(/[\\/\s]+/g, '-')
+  const safeName = fileName.split('/').pop()?.replace(/\\/g, '_') || 'file'
+  return `form-files/${assignmentId}/${sanitizeCell(studentNo) || 'unknown'}/${safeField}-${safeName}`
 }
 
 async function writeTextFile(storage: StorageService, key: string, text: string): Promise<void> {
@@ -115,6 +168,13 @@ export async function saveFormConfig(storage: StorageService, assignmentId: stri
 export async function deleteFormFiles(storage: StorageService, assignmentId: string): Promise<void> {
   await storage.remove(configKey(assignmentId))
   await storage.remove(dataKey(assignmentId))
+  // 文件字段的学生附件：整目录前缀清理（s3 驱动 list 暂不支持，忽略失败）。
+  try {
+    const keys = await storage.list(formFilesPrefix(assignmentId))
+    await Promise.allSettled(keys.map((key) => storage.remove(key)))
+  } catch {
+    // 略：物理文件残留不影响数据一致性。
+  }
 }
 
 export async function loadFormConfig(storage: StorageService, assignmentId: string): Promise<FormConfig | null> {
@@ -128,12 +188,37 @@ export async function loadFormConfig(storage: StorageService, assignmentId: stri
   }
 }
 
+/** 数据文件列布局：老师配置了学号/姓名类型字段时与系统身份列合并，避免重复列。 */
+function layoutFor(config: FormConfig): { columns: string[]; fieldPos: Map<string, number>; noPos: number; namePos: number } {
+  const columns: string[] = []
+  const fieldPos = new Map<string, number>()
+  let noPos = -1
+  let namePos = -1
+  if (!config.fields.some((field) => field.type === 'studentNo')) {
+    noPos = columns.length
+    columns.push(IDENTITY_NO)
+  }
+  if (!config.fields.some((field) => field.type === 'name')) {
+    namePos = columns.length
+    columns.push(IDENTITY_NAME)
+  }
+  for (const field of config.fields) {
+    fieldPos.set(field.name, columns.length)
+    columns.push(field.name)
+  }
+  return { columns, fieldPos, noPos, namePos }
+}
+
 function headerFor(config: FormConfig): string[] {
-  return [IDENTITY_NO, IDENTITY_NAME, ...config.fields.map((field) => field.name)]
+  return layoutFor(config).columns
 }
 
 function recordLine(config: FormConfig, record: FormRecord): string {
-  const cells = [sanitizeCell(record.studentNo), sanitizeCell(record.name), ...config.fields.map((field) => sanitizeCell(record.values[field.name] ?? ''))]
+  const layout = layoutFor(config)
+  const cells = new Array<string>(layout.columns.length).fill('')
+  if (layout.noPos >= 0) cells[layout.noPos] = sanitizeCell(record.studentNo)
+  if (layout.namePos >= 0) cells[layout.namePos] = sanitizeCell(record.name)
+  for (const field of config.fields) cells[layout.fieldPos.get(field.name)!] = sanitizeCell(record.values[field.name] ?? '')
   return cells.join('\t')
 }
 
@@ -147,15 +232,20 @@ export async function readFormRecords(storage: StorageService, assignmentId: str
   }
   const lines = text.split(/\r?\n/).filter((line) => line.trim())
   if (!lines.length) return []
+  const layout = layoutFor(config)
+  const noField = config.fields.find((field) => field.type === 'studentNo')
+  const nameField = config.fields.find((field) => field.type === 'name')
   const records: FormRecord[] = []
-  // 第一行是表头；数据行按配置的字段顺序取值，短行按空值补齐。
+  // 第一行是表头；数据行按配置的列布局取值，短行按空值补齐。
   for (const line of lines.slice(1)) {
     const cells = line.split('\t')
     const values: Record<string, string> = {}
-    config.fields.forEach((field, index) => {
-      values[field.name] = cells[index + 2] ?? ''
-    })
-    records.push({ studentNo: cells[0] ?? '', name: cells[1] ?? '', values })
+    for (const field of config.fields) {
+      values[field.name] = cells[layout.fieldPos.get(field.name)!] ?? ''
+    }
+    const studentNo = (layout.noPos >= 0 ? cells[layout.noPos] : noField ? cells[layout.fieldPos.get(noField.name)!] : '') ?? ''
+    const name = (layout.namePos >= 0 ? cells[layout.namePos] : nameField ? cells[layout.fieldPos.get(nameField.name)!] : '') ?? ''
+    records.push({ studentNo, name, values })
   }
   return records
 }
@@ -204,4 +294,21 @@ export function sortFormRecords(config: FormConfig, records: FormRecord[]): Form
     if (field?.type === 'number') return (Number(a) - Number(b)) * dir
     return a.localeCompare(b, 'zh-CN') * dir
   })
+}
+
+export type FormDisplayColumn = { key: 'studentNo' | 'name'; label: string } | { key: 'field'; label: string; field: FormField }
+
+/** 展示/导出用列：老师若自己配置了学号/姓名类型字段，与系统身份列合并，避免重复列。 */
+export function displayColumns(config: FormConfig): FormDisplayColumn[] {
+  const columns: FormDisplayColumn[] = []
+  if (!config.fields.some((field) => field.type === 'studentNo')) columns.push({ key: 'studentNo', label: IDENTITY_NO })
+  if (!config.fields.some((field) => field.type === 'name')) columns.push({ key: 'name', label: IDENTITY_NAME })
+  for (const field of config.fields) columns.push({ key: 'field', label: field.name, field })
+  return columns
+}
+
+/** 取一行记录在展示列上的单元格值。 */
+export function recordCell(column: FormDisplayColumn, record: FormRecord): string {
+  if (column.key === 'field') return record.values[column.field.name] ?? ''
+  return column.key === 'studentNo' ? record.studentNo : record.name
 }

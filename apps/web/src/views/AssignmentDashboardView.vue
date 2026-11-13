@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, type AssignmentDashboard, type SubmissionVersion } from '../api/client'
 import { describeError } from '../api/error-messages'
@@ -27,6 +27,10 @@ const feedbackDirty = reactive<Record<string, boolean>>({})
 const inFlight = reactive<Record<string, boolean>>({})
 const typeName: Record<string, string> = { online: '线上作业', offline: '线下完成', checkin: '签到', relay: '接龙' }
 const statusName: Record<string, string> = { missing: '未完成', submitted: '已提交', late: '迟交', completed: '已完成', checked_in: '已签到', joined: '已接龙' }
+// 表单记录表：老师自己加了学号/姓名类型字段时，与系统身份列合并，避免重复列。
+const formHasStudentNoField = computed(() => dashboard.value?.form?.fields.some((field) => field.type === 'studentNo') ?? false)
+const formHasNameField = computed(() => dashboard.value?.form?.fields.some((field) => field.type === 'name') ?? false)
+const formRecordColCount = computed(() => (dashboard.value?.form?.fields.length ?? 0) + (formHasStudentNoField.value ? 0 : 1) + (formHasNameField.value ? 0 : 1))
 
 function isBusy(key: string): boolean {
   return !!inFlight[key]
@@ -230,12 +234,12 @@ onMounted(load)
         <section v-if="dashboard.assignment.type === 'form' && dashboard.form" class="surface form-records-wrap" style="overflow:auto" aria-label="表单收集记录">
           <div class="section-heading" style="margin-bottom:6px"><div><p class="eyebrow">已收集 {{ dashboard.records?.length ?? 0 }} 行</p><h2>收集记录</h2></div></div>
           <table class="student-table form-records">
-            <thead><tr><th>学号</th><th>姓名</th><th v-for="field in dashboard.form.fields" :key="field.name">{{ field.name }}</th></tr></thead>
+            <thead><tr><th v-if="!formHasStudentNoField">学号</th><th v-if="!formHasNameField">姓名</th><th v-for="field in dashboard.form.fields" :key="field.name">{{ field.name }}</th></tr></thead>
             <tbody>
-              <tr v-if="!dashboard.records?.length"><td :colspan="dashboard.form.fields.length + 2" class="muted-copy">还没有人填写。</td></tr>
+              <tr v-if="!dashboard.records?.length"><td :colspan="formRecordColCount" class="muted-copy">还没有人填写。</td></tr>
               <tr v-for="record in dashboard.records" :key="record.studentNo">
-                <td>{{ record.studentNo }}</td>
-                <td><strong>{{ record.name }}</strong></td>
+                <td v-if="!formHasStudentNoField">{{ record.studentNo }}</td>
+                <td v-if="!formHasNameField"><strong>{{ record.name }}</strong></td>
                 <td v-for="field in dashboard.form!.fields" :key="field.name">{{ record.values[field.name] || '—' }}</td>
               </tr>
             </tbody>

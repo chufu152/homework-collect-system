@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common'
 import { AnyFilesInterceptor } from '@nestjs/platform-express/multer/interceptors/any-files.interceptor'
 import type { Express, Response } from 'express'
 import { AdminGuard } from '../common/admin.guard.js'
@@ -130,10 +130,37 @@ export class PublicAssignmentsController {
     return this.assignments.formRecord(shareCode, input)
   }
 
-  /** 表单作业：首次提交追加写入数据文件，重复提交原地改写。 */
+  /** 表单作业：提供目标名单，供学号/姓名字段下拉选择。 */
+  @Get(':shareCode/form-roster')
+  formRoster(@Param('shareCode') shareCode: string) {
+    return this.assignments.formRoster(shareCode)
+  }
+
+  /** 表单作业：首次提交追加写入数据文件，重复提交原地改写；文件字段走 multipart。 */
   @Post(':shareCode/form-submissions')
-  submitForm(@Param('shareCode') shareCode: string, @Body(new ValidationPipe({ whitelist: true, transform: true })) input: FormSubmissionDto) {
-    return this.assignments.submitForm(shareCode, input)
+  @UseInterceptors(AnyFilesInterceptor({
+    limits: {
+      files: 30,
+      fileSize: Number(process.env.MAX_UPLOAD_BYTES ?? 20971520),
+    },
+  }))
+  async submitForm(
+    @Param('shareCode') shareCode: string,
+    @Body() rawBody: Record<string, unknown>,
+    @UploadedFiles() files: Express.Multer.File[] = [],
+  ) {
+    // 兼容两种提交方式：JSON（values 为对象）与 multipart（values 为 JSON 字符串 + file__字段名 文件）。
+    let values: unknown = rawBody.values
+    if (typeof values === 'string') {
+      try {
+        values = JSON.parse(values)
+      } catch {
+        throw new BadRequestException('表单数据格式不正确。')
+      }
+    }
+    const parsed = await new ValidationPipe({ whitelist: true, transform: true })
+      .transform({ ...rawBody, values }, { type: 'body', metatype: FormSubmissionDto }) as FormSubmissionDto
+    return this.assignments.submitForm(shareCode, parsed, files ?? [])
   }
 
   @Post(':shareCode/check-ins')

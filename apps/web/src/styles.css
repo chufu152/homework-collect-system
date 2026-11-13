@@ -312,22 +312,56 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
 .designer-remove:disabled { opacity: .4; cursor: not-allowed; }
 .designer-add { align-self: flex-start; }
 .form-designer-props { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--line); }
+/* 日期字段选中后第二行的格式选择 */
+.form-designer-datestyle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.form-designer-datestyle select { flex: 0 1 320px; min-width: 0; min-height: 36px; }
+@media (max-width: 760px) {
+  .form-designer-row { grid-template-columns: minmax(0, 1fr) 96px 58px 34px; gap: 6px; }
+  .form-designer-datestyle { flex-wrap: wrap; }
+  .form-designer-datestyle select { flex: 1 1 100%; }
+}
 
 /* ---- 表单作业：学生端填写表格 ----
    桌面：第一行字段名、第二行输入（N 列横排）；
    手机：第一列字段名、第二列输入（N 行竖排）。 */
 .form-identity-row { display: flex; gap: 9px; }
 .form-identity-row input { flex: 1; min-width: 0; }
-.form-sheet { display: grid; gap: 1px; margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--line); overflow: hidden; }
-.form-sheet-label { display: flex; align-items: center; gap: 3px; padding: 10px 12px; background: #eef4ef; color: #34494d; font-size: 12.5px; font-weight: 600; }
+.form-sheet { display: grid; gap: 1px; margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
+/* 圆角改由四角子元素自己承担，保持容器 overflow 可见（学号/姓名下拉面板需要溢出显示）。 */
+.form-sheet > :first-child { border-top-left-radius: 11px; }
+.form-sheet > :nth-child(2), .form-sheet > :nth-child(2) > .form-sheet-input { border-top-right-radius: 11px; }
+.form-sheet > :last-child, .form-sheet > :last-child > .form-sheet-input { border-bottom-right-radius: 11px; }
+.form-sheet > :nth-last-child(2) { border-bottom-left-radius: 11px; }
+.form-sheet-label { display: flex; align-items: center; gap: 3px; padding: 10px 12px; background: #eef4ef; color: #34494d; font-size: 12.5px; font-weight: 600; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .form-required { color: var(--error); font-style: normal; }
-.form-sheet-input { width: 100%; min-height: 46px; padding: 8px 12px; border: 0; background: #fff; font-size: 14px; }
+.form-sheet-input { width: 100%; min-width: 0; min-height: 46px; padding: 8px 12px; border: 0; background: #fff; font-size: 14px; }
 .form-sheet-input:focus { outline: 2px solid var(--sea); outline-offset: -2px; }
+
+/* 学号/姓名：输入 + 右侧下拉按钮；候选面板浮层显示，点击外部自动收起。 */
+.form-cell { position: relative; display: flex; align-items: stretch; background: #fff; min-width: 0; }
+.form-cell .form-sheet-input { flex: 1; }
+.form-dd-toggle { flex: 0 0 auto; width: 38px; border: 0; border-left: 1px solid var(--line); background: #eef4ef; color: #57707a; font-size: 10px; cursor: pointer; }
+.form-dd-toggle:hover { background: #e2ece2; }
+.form-dd-list { position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 40; max-height: 228px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(31, 48, 44, .16); }
+.form-dd-list button { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: none; text-align: left; font-size: 13.5px; cursor: pointer; }
+.form-dd-list button:hover { background: #eef4ef; }
+.form-dd-list strong { color: #22343a; font-weight: 600; overflow-wrap: anywhere; }
+.form-dd-list span { color: var(--muted); font-size: 12px; text-align: right; }
+.form-dd-empty { padding: 9px 10px; color: var(--muted); font-size: 12.5px; }
+
+/* 文件字段 */
+.form-file-cell { display: block; padding: 8px 10px; background: #fff; }
+.form-sheet-file { width: 100%; min-width: 0; font-size: 12.5px; color: #34494d; }
+.form-file-current { margin: 6px 0 0; font-size: 12px; color: #34494d; overflow-wrap: anywhere; }
+
 @media (min-width: 761px) {
   .form-sheet { grid-template-columns: repeat(var(--form-cols, 3), minmax(110px, 1fr)); }
 }
 @media (max-width: 760px) {
-  .form-sheet { grid-template-columns: 96px minmax(0, 1fr); }
+  /* 手机端：字段名列自适应宽度并允许换行，输入列吃满剩余空间，杜绝文字截断。 */
+  .form-sheet { grid-template-columns: minmax(64px, auto) minmax(0, 1fr); }
+  .form-sheet-label { padding: 9px 10px; font-size: 12px; line-height: 1.45; }
+  .form-records th, .form-records td { white-space: normal; overflow-wrap: anywhere; }
 }
 
 /* ---- 表单作业：教师看板收集记录表 ---- */

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { api, type PublicAssignment } from '../api/client'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { api, type FormFieldConfig, type PublicAssignment } from '../api/client'
 import { describeError } from '../api/error-messages'
 
 const props = defineProps<{ shareCode: string }>()
@@ -25,11 +25,20 @@ const latestVersion = ref(0)
 // ---- 表单作业：按字段配置填写，读取已有记录回显，重复提交原地更新 ----
 const formValues = ref<Record<string, string>>({})
 const formRecordLoaded = ref(false)
+// 学号/姓名字段的下拉候选：来自目标名单；输入时收窄匹配。
+const formRoster = ref<Array<{ studentNo: string; name: string }>>([])
+const openDropdown = ref('')
+// 文件字段：新选择的文件与已提交的文件名（回显）。
+const formFiles = ref<Record<string, File>>({})
+const formFileNames = ref<Record<string, string>>({})
 
 const formFields = computed(() => assignment.value?.form?.fields ?? [])
 
 function resetFormValues(): void {
   formValues.value = Object.fromEntries(formFields.value.map((field) => [field.name, '']))
+  formFiles.value = {}
+  formFileNames.value = {}
+  openDropdown.value = ''
 }
 
 const fileAccept = computed(() => (assignment.value?.allowedFileTypes ?? []).map((type) => `.${type}`).join(','))
@@ -42,7 +51,11 @@ async function load(): Promise<void> {
   try {
     assignment.value = await api.getPublicAssignment(props.shareCode)
     if (assignment.value.type === 'relay') await refreshRelay()
-    if (assignment.value.type === 'form') resetFormValues()
+    if (assignment.value.type === 'form') {
+      resetFormValues()
+      // 名单用于学号/姓名字段下拉；读取失败不影响填写（退化为手动输入）。
+      api.getFormRoster(props.shareCode).then((roster) => { formRoster.value = roster }).catch(() => undefined)
+    }
   } catch (error) {
     errorMessage.value = describeError(error, '无法读取这项作业。')
   } finally {
@@ -171,6 +184,10 @@ async function loadMyFormRecord(): Promise<void> {
     const result = await api.getFormRecord(props.shareCode, { studentName: name })
     if (result.record) {
       formValues.value = Object.fromEntries(formFields.value.map((field) => [field.name, result.record!.values[field.name] ?? '']))
+      formFileNames.value = Object.fromEntries(
+        formFields.value.filter((field) => field.type === 'file').map((field) => [field.name, result.record!.values[field.name] ?? '']),
+      )
+      formFiles.value = {}
       formRecordLoaded.value = true
       confirmation.value = `已读取 ${result.record.name} 的已有填写记录，修改后再次提交即可更新。`
     } else {
@@ -181,19 +198,99 @@ async function loadMyFormRecord(): Promise<void> {
   })
 }
 
+// ---- 表单作业：字段交互 ----
+
+/** 学号/姓名字段的候选：按当前输入收窄（同时匹配另一列做提示）。 */
+function dropdownOptions(field: FormFieldConfig): Array<{ studentNo: string; name: string }> {
+  const query = String(formValues.value[field.name] ?? '').trim()
+  return formRoster.value.filter((row) => {
+    if (!query) return true
+    const primary = field.type === 'studentNo' ? row.studentNo : row.name
+    const other = field.type === 'studentNo' ? row.name : row.studentNo
+    return primary.includes(query) || other.includes(query)
+  })
+}
+
+function toggleDropdown(fieldName: string): void {
+  openDropdown.value = openDropdown.value === fieldName ? '' : fieldName
+}
+
+function pickRosterOption(field: FormFieldConfig, option: { studentNo: string; name: string }): void {
+  formValues.value[field.name] = field.type === 'studentNo' ? option.studentNo : option.name
+  openDropdown.value = ''
+}
+
+function closeDropdown(event: Event): void {
+  if (!(event.target instanceof Element)) { openDropdown.value = ''; return }
+  if (!event.target.closest('.form-cell')) openDropdown.value = ''
+}
+onMounted(() => document.addEventListener('click', closeDropdown))
+onBeforeUnmount(() => document.removeEventListener('click', closeDropdown))
+
+/** 日期字段：把已存的展示值反解析成 date input 需要的 YYYY-MM-DD。 */
+function dateInputValue(field: FormFieldConfig): string {
+  const raw = String(formValues.value[field.name] ?? '')
+  const style = field.dateStyle ?? 'medium'
+  if (style === 'long') {
+    const match = raw.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/)
+    if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
+    return ''
+  }
+  if (style === 'short') {
+    const match = raw.match(/^(\d{1,2})-(\d{1,2})$/)
+    if (match) return `${new Date().getFullYear()}-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`
+    return ''
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : ''
+}
+
+/** 日期选择器选定后按配置格式写回（长/中/短），自定义格式走手填。 */
+function onDateChange(field: FormFieldConfig, event: Event): void {
+  const value = (event.target as HTMLInputElement).value
+  if (!value) { formValues.value[field.name] = ''; return }
+  const [year, month, day] = value.split('-')
+  const style = field.dateStyle ?? 'medium'
+  formValues.value[field.name] = style === 'long'
+    ? `${year}年${Number(month)}月${Number(day)}日`
+    : style === 'short'
+      ? `${Number(month)}-${Number(day)}`
+      : value
+}
+
+function onFormFileChange(field: FormFieldConfig, event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) {
+    formFiles.value[field.name] = file
+    formValues.value[field.name] = file.name
+  } else {
+    delete formFiles.value[field.name]
+    formValues.value[field.name] = formFileNames.value[field.name] ?? ''
+  }
+}
+
 /** 表单作业：首次提交追加一行，重复提交更新自己的行。 */
 async function submitFormSheet(): Promise<void> {
   if (!assignment.value) return
-  const missing = formFields.value.find((field) => field.required && !String(formValues.value[field.name] ?? '').trim())
+  const missing = formFields.value.find((field) =>
+    field.required && (field.type === 'file'
+      ? !formFiles.value[field.name] && !formFileNames.value[field.name]
+      : !String(formValues.value[field.name] ?? '').trim()))
   if (missing) {
     errorMessage.value = `请填写「${missing.name}」。`
     return
   }
   await perform(async () => {
+    const files: Array<{ fieldIndex: number; file: File }> = []
+    formFields.value.forEach((field, index) => {
+      const file = formFiles.value[field.name]
+      if (field.type === 'file' && file) files.push({ fieldIndex: index, file })
+    })
     const result = await api.submitForm(props.shareCode, {
       studentName: studentName.value.trim(),
-      // 数字/日期输入框的 v-model 可能给出 number，统一转成字符串。
+      // 数字/日期输入框的 v-model 可能给出 number，统一转成字符串；文件列的值由服务端决定。
       values: Object.fromEntries(formFields.value.map((field) => [field.name, String(formValues.value[field.name] ?? '')])),
+      files,
     })
     receiptCode.value = result.receiptCode
     latestVersion.value = result.version
@@ -341,16 +438,62 @@ onMounted(load)
           </label>
 
           <div v-if="formFields.length" class="form-sheet" :style="{ '--form-cols': formFields.length }">
-            <template v-for="field in formFields" :key="field.name">
-              <label class="form-sheet-label" :for="`form-field-${field.name}`">{{ field.name }}<em v-if="field.required" class="form-required" aria-hidden="true">*</em></label>
+            <template v-for="(field, index) in formFields" :key="field.name">
+              <label class="form-sheet-label" :for="`form-field-${index}`">{{ field.name }}<em v-if="field.required" class="form-required" aria-hidden="true">*</em></label>
+
+              <!-- 学号/姓名：输入时收窄匹配的名单下拉 -->
+              <div v-if="field.type === 'studentNo' || field.type === 'name'" class="form-cell">
+                <input
+                  :id="`form-field-${index}`"
+                  v-model="formValues[field.name]"
+                  class="form-sheet-input"
+                  type="text"
+                  autocomplete="off"
+                  :aria-label="field.name"
+                  :placeholder="field.required ? '必填，可下拉选择' : '可下拉选择'"
+                  @focus="openDropdown = field.name"
+                />
+                <button class="form-dd-toggle" type="button" tabindex="-1" :aria-label="`下拉选择${field.name}`" @click="toggleDropdown(field.name)">▼</button>
+                <ul v-if="openDropdown === field.name" class="form-dd-list" role="listbox" :aria-label="`${field.name}候选`">
+                  <li v-if="!dropdownOptions(field).length" class="form-dd-empty">没有匹配的选项</li>
+                  <li v-for="option in dropdownOptions(field)" :key="option.studentNo">
+                    <button type="button" @mousedown.prevent="pickRosterOption(field, option)">
+                      <strong>{{ field.type === 'studentNo' ? option.studentNo : option.name }}</strong>
+                      <span>{{ field.type === 'studentNo' ? option.name : option.studentNo }}</span>
+                    </button>
+                  </li>
+                </ul>
+              </div>
+
+              <!-- 日期：长/中/短格式用日期选择器，自定义自由填写 -->
+              <div v-else-if="field.type === 'date' && field.dateStyle !== 'custom'" class="form-cell">
+                <input
+                  :id="`form-field-${index}`"
+                  class="form-sheet-input"
+                  type="date"
+                  :value="dateInputValue(field)"
+                  :aria-label="field.name"
+                  @change="onDateChange(field, $event)"
+                />
+              </div>
+
+              <!-- 文件：选择一个文件，回显已提交文件名 -->
+              <div v-else-if="field.type === 'file'" class="form-cell form-file-cell">
+                <input :id="`form-field-${index}`" class="form-sheet-file" type="file" :aria-label="field.name" @change="onFormFileChange(field, $event)" />
+                <p v-if="formFileNames[field.name] && !formFiles[field.name]" class="form-file-current">已提交：{{ formFileNames[field.name] }}（不换可留空）</p>
+                <p v-else-if="formFiles[field.name]" class="form-file-current">已选择：{{ formFiles[field.name].name }}</p>
+              </div>
+
+              <!-- 数字 / 文本 / 自定义日期 -->
               <input
-                :id="`form-field-${field.name}`"
+                v-else
+                :id="`form-field-${index}`"
                 v-model="formValues[field.name]"
                 class="form-sheet-input"
-                :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'"
+                :type="field.type === 'number' ? 'number' : 'text'"
                 :step="field.type === 'number' ? 'any' : undefined"
                 :aria-label="field.name"
-                :placeholder="field.required ? '必填' : ''"
+                :placeholder="field.type === 'date' ? '按老师要求的格式填写' : field.required ? '必填' : ''"
               />
             </template>
           </div>

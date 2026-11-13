@@ -9,7 +9,7 @@ import { ExportsService } from '../exports/exports.service.js'
 import { calculateDashboard, resolveTargetStudents, validateSubmissionAccess } from './workflows.js'
 import type { AssignmentStateDto, CreateAssignmentDto, FeedbackDto, FormSubmissionDto, RelayEntryDto, StudentLookupDto } from './assignments.dto.js'
 import { StorageService } from '../storage/storage.service.js'
-import { assertPrimaryKeyAvailable, deleteFormFiles, findFormRecord, loadFormConfig, readFormRecords, saveFormConfig, sortFormRecords, upsertFormRecord, validateFormConfig, validateFormValues, type FormConfig, type FormRecord } from './form-store.js'
+import { assertPrimaryKeyAvailable, deleteFormFiles, findFormRecord, formFileKey, loadFormConfig, readFormRecords, saveFormConfig, sortFormRecords, upsertFormRecord, validateFormConfig, validateFormValues, displayColumns, recordCell, type FormConfig, type FormRecord } from './form-store.js'
 import type { DownloadResult } from '../common/file-response.js'
 import { safeDownloadName, validateUploadContent } from '../storage/storage-policy.js'
 
@@ -137,6 +137,7 @@ export class AssignmentsService {
           name: field.name,
           type: field.type ?? 'text',
           required: field.required ?? false,
+          ...(field.type === 'date' && field.dateStyle ? { dateStyle: field.dateStyle } : {}),
         })),
         primaryKey: input.formConfig?.primaryKey ?? '',
         sortField: input.formConfig?.sortField?.trim() || null,
@@ -261,8 +262,20 @@ export class AssignmentsService {
     return { record }
   }
 
+  /** 表单作业：提供名单给学号/姓名字段的下拉选择（仅目标学生）。 */
+  async formRoster(shareCode: string) {
+    const assignment = await this.publicAssignment(shareCode)
+    if (assignment.type !== 'form') throw new BadRequestException('This assignment is not a form.')
+    const roster = await this.prisma.student.findMany({
+      where: { id: { in: assignment.targets.map((target) => target.studentId) } },
+      select: { studentNo: true, name: true },
+      orderBy: { studentNo: 'asc' },
+    })
+    return { roster }
+  }
+
   /** 表单作业：首次提交追加写入数据文本文件，重复提交原地改写自己的行。 */
-  async submitForm(shareCode: string, input: FormSubmissionDto) {
+  async submitForm(shareCode: string, input: FormSubmissionDto, files: Express.Multer.File[] = []) {
     const assignment = await this.publicAssignment(shareCode)
     if (assignment.type !== 'form') throw new BadRequestException('This assignment is not a form.')
     const config = await loadFormConfig(this.storage, assignment.id)
@@ -276,7 +289,51 @@ export class AssignmentsService {
     if (access === 'not-targeted') throw new BadRequestException('This student is not included in the assignment audience.')
     if (access !== 'allowed') throw new ConflictException('This assignment is not accepting submissions.')
 
-    const values = validateFormValues(config, input.values)
+    // 文件字段：前端以 file__序号 命名上传控件（序号 = 文件字段在配置中的顺序），
+    // 避免中文字段名在 multipart 解码（latin1）下的匹配问题。
+    const fileFields = config.fields.filter((field) => field.type === 'file')
+    const fileNames: Record<string, string> = {}
+    const previousRecord = fileFields.length
+      ? await findFormRecord(this.storage, assignment.id, config, student.studentNo)
+      : null
+    if (fileFields.length) {
+      // 序号 = 该文件字段在全部表单字段中的位置（与前端一致），不是文件字段内部的序号。
+      const fieldByOverallIndex = new Map<number, string>()
+      config.fields.forEach((field, index) => {
+        if (field.type === 'file') fieldByOverallIndex.set(index, field.name)
+      })
+      const byIndex = new Map<number, Express.Multer.File>()
+      for (const file of files) {
+        if (!file.fieldname.startsWith('file__')) continue
+        const index = Number.parseInt(file.fieldname.slice(6), 10)
+        if (Number.isInteger(index) && index >= 0) byIndex.set(index, file)
+      }
+      if (byIndex.size > fileFields.length) throw new BadRequestException('文件字段数量超出表单配置。')
+      for (const [index, file] of byIndex) {
+        const fieldName = fieldByOverallIndex.get(index)
+        if (!fieldName) throw new BadRequestException('文件字段位置与表单配置不符。')
+        const field = config.fields.find((item) => item.name === fieldName)!
+        if (file.size > assignment.maxFileBytes) throw new BadRequestException(`「${fieldName}」的文件不能超过 ${Math.floor(assignment.maxFileBytes / 1024 / 1024)} MB。`)
+        // 换了新文件时清掉该字段旧附件（同名本就会被覆盖，这里处理改名的情况）。
+        const safeField = fieldName.replace(/[\\/\s]+/g, '-')
+        const studentPrefix = `form-files/${assignment.id}/${student.studentNo}/`
+        const olds = await this.storage.list(studentPrefix).catch(() => [] as string[])
+        await Promise.allSettled(
+          olds.filter((key) => key.startsWith(`${studentPrefix}${safeField}-`)).map((key) => this.storage.remove(key)),
+        )
+        const key = formFileKey(assignment.id, student.studentNo, fieldName, file.originalname)
+        await this.storage.save(key, file)
+        fileNames[fieldName] = file.originalname
+      }
+    }
+
+    const values = validateFormValues(
+      config,
+      input.values,
+      { studentNo: student.studentNo, name: student.name },
+      fileNames,
+      previousRecord?.values ?? {},
+    )
     if (typeof values === 'string') throw new BadRequestException(values)
     const record: FormRecord = { studentNo: student.studentNo, name: student.name, values }
 
@@ -749,13 +806,10 @@ export class AssignmentsService {
     const config = await loadFormConfig(this.storage, assignment.id)
     if (!config) throw new NotFoundException('Form config is missing.')
     const records = sortFormRecords(config, await readFormRecords(this.storage, assignment.id, config))
+    const columns = displayColumns(config)
     const rows = [
-      ['学号', '姓名', ...config.fields.map((field) => field.name)],
-      ...records.map((record) => [
-        record.studentNo,
-        record.name,
-        ...config.fields.map((field) => record.values[field.name] ?? ''),
-      ]),
+      columns.map((column) => column.label),
+      ...records.map((record) => columns.map((column) => recordCell(column, record))),
     ]
     const { createXlsx } = await import('../exports/xlsx-archive.js')
     return { filename: `${this.fileBase(assignment.title)}.xlsx`, content: createXlsx(rows) }

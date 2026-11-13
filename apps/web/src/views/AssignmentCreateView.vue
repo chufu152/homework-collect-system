@@ -29,15 +29,29 @@ interface FormDesignerField extends FormFieldConfig {
   key: number
 }
 let fieldKeySeed = 0
-const formFields = ref<FormDesignerField[]>([
-  { key: ++fieldKeySeed, name: '日期', type: 'date', required: true },
-  { key: ++fieldKeySeed, name: '说明', type: 'text', required: false },
-])
-const formPrimaryKey = ref('日期')
-const formSortField = ref('日期')
+// 所有字段（含学号/姓名）都由老师自行添加，没有系统保留字段。
+const formFields = ref<FormDesignerField[]>([])
+const formPrimaryKey = ref('')
+const formSortField = ref('')
 const formSortDir = ref<'asc' | 'desc'>('asc')
 
 const formFieldNames = computed(() => formFields.value.map((field) => field.name.trim()).filter(Boolean))
+
+const fieldTypeOptions: Array<{ value: FormFieldConfig['type']; label: string }> = [
+  { value: 'text', label: '文本' },
+  { value: 'number', label: '数字' },
+  { value: 'date', label: '日期' },
+  { value: 'studentNo', label: '学号' },
+  { value: 'name', label: '姓名' },
+  { value: 'file', label: '文件' },
+]
+
+const dateStyleLabels: Array<{ value: NonNullable<FormFieldConfig['dateStyle']>; label: string }> = [
+  { value: 'long', label: '长日期（2026年11月13日）' },
+  { value: 'medium', label: '中日期（2026-11-13）' },
+  { value: 'short', label: '短日期（11-13）' },
+  { value: 'custom', label: '自定义（自由填写）' },
+]
 
 function addFormField(): void {
   if (formFields.value.length >= 30) return
@@ -59,11 +73,10 @@ function removeFormField(key: number): void {
 
 function validateFormDesigner(): string | null {
   const fields = formFields.value.map((field) => ({ ...field }))
-  if (!fields.length) return '表单至少需要一个字段。'
+  if (!fields.length) return '请至少添加一个字段。'
   const names = fields.map((field) => field.name.trim())
   if (names.some((name) => !name)) return '每个字段都需要填写字段名。'
   if (new Set(names).size !== names.length) return '字段名不能重复。'
-  if (names.includes('学号') || names.includes('姓名')) return '字段名不能使用系统保留的「学号」「姓名」。'
   if (!names.includes(formPrimaryKey.value)) return '请从字段中选择一个主键。'
   if (formSortField.value && !names.includes(formSortField.value)) return '排序依据需要从字段中选择。'
   return null
@@ -138,7 +151,12 @@ async function create(): Promise<void> {
       submissionMode: type.value === 'online' ? submissionMode.value : type.value === 'leave' ? 'file' : 'text',
       ...(type.value === 'form' ? {
         formConfig: {
-          fields: formFields.value.map((field) => ({ name: field.name.trim(), type: field.type, required: field.required })),
+          fields: formFields.value.map((field) => ({
+            name: field.name.trim(),
+            type: field.type,
+            required: field.required,
+            ...(field.type === 'date' ? { dateStyle: field.dateStyle ?? 'medium' } : {}),
+          })),
           primaryKey: formPrimaryKey.value,
           sortField: formSortField.value || null,
           sortDir: formSortDir.value,
@@ -225,20 +243,31 @@ onMounted(loadClass)
             </Transition>
             <Transition name="create-reveal">
               <div v-if="type === 'form'" class="create-subfield form-designer">
-                <p class="field-note">像建数据表一样设计字段：学号、姓名由系统自动记录；主键用于识别每人唯一一行（全班不能重值），排序决定导出 Excel 的行顺序。</p>
-                <div class="form-designer-head form-designer-row" aria-hidden="true">
+                <p class="field-note">像建数据表一样自由设计字段，所有字段（学号、姓名也是）都由你决定加或不加；主键用于识别每人唯一一行（全班不能重值），排序决定导出 Excel 的行顺序。</p>
+                <div v-if="formFields.length" class="form-designer-head form-designer-row" aria-hidden="true">
                   <span>字段名</span><span>类型</span><span>必填</span><span></span>
                 </div>
-                <div v-for="field in formFields" :key="field.key" class="form-designer-row">
-                  <input v-model="field.name" maxlength="40" placeholder="字段名，例如：体温" />
-                  <select v-model="field.type" :aria-label="`${field.name || '未命名'} 类型`"><option value="text">文本</option><option value="number">数字</option><option value="date">日期</option></select>
-                  <label class="designer-check"><input v-model="field.required" type="checkbox" />必填</label>
-                  <button class="designer-remove" type="button" :aria-label="`删除字段 ${field.name || '未命名'}`" :disabled="formFields.length <= 1" @click="removeFormField(field.key)">✕</button>
-                </div>
+                <template v-for="field in formFields" :key="field.key">
+                  <div class="form-designer-row">
+                    <input v-model="field.name" maxlength="40" placeholder="字段名，例如：体温" />
+                    <select v-model="field.type" :aria-label="`${field.name || '未命名'} 类型`">
+                      <option v-for="option in fieldTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                    </select>
+                    <label class="designer-check"><input v-model="field.required" type="checkbox" />必填</label>
+                    <button class="designer-remove" type="button" :aria-label="`删除字段 ${field.name || '未命名'}`" @click="removeFormField(field.key)">✕</button>
+                  </div>
+                  <div v-if="field.type === 'date'" class="form-designer-datestyle">
+                    <span>日期格式</span>
+                    <select v-model="field.dateStyle" :aria-label="`${field.name || '未命名'} 日期格式`">
+                      <option v-for="style in dateStyleLabels" :key="style.value" :value="style.value">{{ style.label }}</option>
+                    </select>
+                  </div>
+                </template>
                 <button class="button secondary designer-add" type="button" :disabled="formFields.length >= 30" @click="addFormField">＋ 添加字段</button>
+                <p v-if="!formFields.length" class="field-note" role="status">还没有字段：点「添加字段」开始设计；学号、姓名类型的字段支持学生下拉选择名单。</p>
                 <div class="form-designer-props">
                   <label class="create-inline-label">主键
-                    <select v-model="formPrimaryKey"><option v-for="name in formFieldNames" :key="name" :value="name">{{ name }}</option></select>
+                    <select v-model="formPrimaryKey"><option v-if="!formFieldNames.length" value="" disabled>请先添加字段</option><option v-for="name in formFieldNames" :key="name" :value="name">{{ name }}</option></select>
                   </label>
                   <label class="create-inline-label">排序依据
                     <select v-model="formSortField"><option value="">不排序</option><option v-for="name in formFieldNames" :key="name" :value="name">{{ name }}</option></select>
