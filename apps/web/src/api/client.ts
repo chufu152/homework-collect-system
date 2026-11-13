@@ -266,6 +266,8 @@ export const api = {
   },
   importStudents: (classId: string, students: Array<{ studentNo: string; name: string }>) => request<{ created: number; updated: number; rejected: Array<{ row: number; reason: string }> }>(`/classes/${encodeURIComponent(classId)}/students`, { method: 'PUT', body: JSON.stringify({ students }) }),
   deleteStudent: (classId: string, studentId: string) => request<{ removed: boolean }>(`/classes/${encodeURIComponent(classId)}/students/${encodeURIComponent(studentId)}`, { method: 'DELETE' }),
+  /** 单独修改一名学生的学号/姓名（至少提供一个字段）。 */
+  updateStudent: (classId: string, studentId: string, data: { studentNo?: string; name?: string }) => request<{ id: string; studentNo: string; name: string }>(`/classes/${encodeURIComponent(classId)}/students/${encodeURIComponent(studentId)}`, { method: 'PATCH', body: JSON.stringify(data) }),
   /** 从云端彻底删除班级：名单、分组、作业与提交记录全部清除，不可恢复。 */
   deleteClass: (classId: string) => request<{ removed: boolean; removedFiles: number }>(`/classes/${encodeURIComponent(classId)}`, { method: 'DELETE' }),
   listGroups: async (classId: string) => {

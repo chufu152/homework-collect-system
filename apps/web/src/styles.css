@@ -292,6 +292,8 @@ input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #bacbc5; bor
 .member-list .member-name { color: var(--ink); font-size: 14px; font-weight: 600; }
 .member-list .member-groups { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .member-list .member-groups .count-chip { padding: 4px 8px; font-size: 10px; }
+.member-list .member-edit { flex: none; padding: 4px 10px; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.member-list .member-edit:hover { color: var(--sea); border-color: var(--sea); background: rgba(23, 96, 87, .08); }
 .member-scroll { max-height: min(52vh, 560px); overflow: auto; }
 
 /* ---- 居中模态弹窗：遮罩淡入 + 面板缩放弹簧 ---- */

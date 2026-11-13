@@ -28,6 +28,11 @@ const groupCount = ref(4)
 const selectedStudentIds = ref<string[]>([])
 const deleteSelectedIds = ref<string[]>([])
 const savingGroup = ref(false)
+// ---- 修改学生信息：每行「修改」按钮打开弹窗，单独改学号/姓名 ----
+const editingStudent = ref<{ id: string; studentNo: string; name: string } | null>(null)
+const editStudentNo = ref('')
+const editName = ref('')
+const savingStudent = ref(false)
 
 // ---- 顶部通知 banner：管理操作完成后从顶部下滑进入，停留 2 秒自动划出 ----
 const toast = ref<{ text: string; tone: 'success' | 'danger' } | null>(null)
@@ -45,16 +50,17 @@ function showToast(text: string, tone: 'success' | 'danger' = 'success'): void {
 }
 
 // ---- 弹窗与二次确认状态机 ----
-type ModalName = 'add' | 'delete' | 'group'
+type ModalName = 'add' | 'delete' | 'group' | 'edit'
 const activeModal = ref<ModalName | null>(null)
 const modalError = ref('')
 const addPanel = ref<HTMLElement | null>(null)
 const deletePanel = ref<HTMLElement | null>(null)
 const groupPanel = ref<HTMLElement | null>(null)
+const editPanel = ref<HTMLElement | null>(null)
 const confirmState = ref<{ title: string; message: string; confirmText: string; action: () => Promise<void> } | null>(null)
 const confirmBusy = ref(false)
 
-const busy = computed(() => importing.value || deleting.value || savingGroup.value || confirmBusy.value)
+const busy = computed(() => importing.value || deleting.value || savingGroup.value || confirmBusy.value || savingStudent.value)
 const anyOverlayOpen = computed(() => activeModal.value !== null || confirmState.value !== null)
 
 const parsedRoster = computed(() => rosterText.value.split(/\r?\n/).map((line, index) => {
@@ -89,13 +95,27 @@ async function openModal(name: ModalName): Promise<void> {
   if (name === 'group') selectedStudentIds.value = []
   activeModal.value = name
   await nextTick()
-  ;({ add: addPanel, delete: deletePanel, group: groupPanel })[name]?.value?.focus()
+  ;({ add: addPanel, delete: deletePanel, group: groupPanel, edit: editPanel })[name]?.value?.focus()
+}
+
+/** 打开修改学生信息弹窗：预填当前学号与姓名。 */
+function openEditStudent(student: { id: string; studentNo: string; name: string }): void {
+  if (busy.value || loading.value) return
+  errorMessage.value = ''
+  modalError.value = ''
+  editingStudent.value = student
+  editStudentNo.value = student.studentNo
+  editName.value = student.name
+  void openModal('edit')
 }
 
 function closeModal(): void {
   // C1 延续：请求在途时不允许关闭弹窗，避免导入/删除过程中界面状态错乱。
   if (busy.value) return
-  if (!confirmState.value) activeModal.value = null
+  if (!confirmState.value) {
+    activeModal.value = null
+    editingStudent.value = null
+  }
 }
 
 function requestConfirm(title: string, message: string, confirmText: string, action: () => Promise<void>): void {
@@ -338,6 +358,42 @@ function confirmDelete(): void {
   )
 }
 
+// ---- 修改学生信息 ----
+function confirmEditStudent(): void {
+  if (!classInfo.value || !editingStudent.value) return
+  const studentNo = editStudentNo.value.trim()
+  const name = editName.value.trim()
+  if (!studentNo && !name) {
+    modalError.value = '请填写新的学号或姓名。'
+    return
+  }
+  savingStudent.value = true
+  const payload: { studentNo?: string; name?: string } = {}
+  if (studentNo !== editingStudent.value.studentNo) payload.studentNo = studentNo
+  if (name !== editingStudent.value.name) payload.name = name
+  if (!Object.keys(payload).length) {
+    // 没有任何改动：直接关闭即可，不打扰后端。
+    savingStudent.value = false
+    activeModal.value = null
+    editingStudent.value = null
+    return
+  }
+  void (async () => {
+    try {
+      const updated = await api.updateStudent(classInfo.value!.classId, editingStudent.value!.id, payload)
+      const index = students.value.findIndex((student) => student.id === updated.id)
+      if (index >= 0) students.value[index] = { ...students.value[index], studentNo: updated.studentNo, name: updated.name }
+      showToast(`已修改学生信息：${updated.studentNo}　${updated.name}`, 'success')
+      activeModal.value = null
+      editingStudent.value = null
+    } catch (error) {
+      modalError.value = describeError(error, '学生信息修改失败。')
+    } finally {
+      savingStudent.value = false
+    }
+  })()
+}
+
 // ---- 分组 ----
 function confirmGroup(): void {
   if (!classInfo.value) return
@@ -453,6 +509,7 @@ onBeforeUnmount(() => {
               <span class="member-no">{{ student.studentNo }}</span>
               <span class="member-name">{{ student.name }}</span>
               <span class="member-groups"><span v-for="group in student.groups" :key="group.id" class="count-chip">{{ group.name }}</span></span>
+              <button class="member-edit" type="button" :title="`修改 ${student.name} 的学号/姓名`" @click="openEditStudent(student)">修改</button>
             </li>
           </ul>
         </div>
@@ -542,6 +599,27 @@ onBeforeUnmount(() => {
               <div class="modal-foot">
                 <button class="button ghost" type="button" :disabled="busy" @click="closeModal">取消</button>
                 <button class="button primary" type="button" :disabled="busy || loading" @click="confirmGroup">{{ savingGroup ? '正在保存…' : groupStrategy === 'balanced_random' ? '随机分组' : '建立手动分组' }}</button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+        <Transition name="modal">
+          <div v-if="activeModal === 'edit' && editingStudent" class="modal-root">
+            <div class="modal-backdrop" @click="closeModal"></div>
+            <div ref="editPanel" class="modal-panel" role="dialog" aria-modal="true" aria-label="修改学生信息" tabindex="-1">
+              <div class="modal-head">
+                <div><p class="eyebrow">{{ classInfo?.name }}</p><h2>修改学生信息</h2></div>
+                <button class="modal-close" type="button" aria-label="关闭弹窗" :disabled="busy" @click="closeModal">×</button>
+              </div>
+              <div class="modal-body">
+                <label class="field-block"><span>学号</span><input v-model="editStudentNo" maxlength="40" /></label>
+                <label class="field-block"><span>姓名</span><input v-model="editName" maxlength="80" /></label>
+                <p class="muted-copy">修改学号时若与班里其他学生重复会被拒绝；改名不影响该学生已有的提交记录与回执。</p>
+                <p v-if="modalError" class="field-message error-text" role="alert">{{ modalError }}</p>
+              </div>
+              <div class="modal-foot">
+                <button class="button ghost" type="button" :disabled="busy" @click="closeModal">取消</button>
+                <button class="button primary" type="button" :disabled="busy || loading" @click="confirmEditStudent">{{ savingStudent ? '正在保存…' : '保存修改' }}</button>
               </div>
             </div>
           </div>

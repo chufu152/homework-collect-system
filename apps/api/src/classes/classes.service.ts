@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js'
 import { StorageService } from '../storage/storage.service.js'
 import { hashTeacherKey, isValidTeacherKeyFormat, keyMatchesHash } from '../common/admin-token.js'
 import { partitionIntoGroups } from '../assignments/workflows.js'
-import type { CreateGroupDto, ImportClassDto, ImportStudentsDto, VerifyClassKeyDto } from './classes.dto.js'
+import type { CreateGroupDto, ImportClassDto, ImportStudentsDto, UpdateStudentDto, VerifyClassKeyDto } from './classes.dto.js'
 
 function shuffle<T>(values: T[]): T[] {
   const result = [...values]
@@ -170,6 +170,38 @@ export class ClassesService {
     }
     await this.prisma.student.delete({ where: { id: studentId } })
     return { removed: true }
+  }
+
+  /** 单独修改学生的学号或姓名；改学号时需保证班级内学号唯一。 */
+  async updateStudent(classId: string, studentId: string, input: UpdateStudentDto) {
+    await this.requireClass(classId)
+    const student = await this.prisma.student.findFirst({
+      where: { id: studentId, classId },
+      select: { id: true, studentNo: true, name: true },
+    })
+    if (!student) throw new NotFoundException('Student not found in this class.')
+
+    const studentNo = input.studentNo?.trim()
+    const name = input.name?.trim()
+    if (!studentNo && !name) {
+      throw new BadRequestException('请至少提供新的学号或姓名。')
+    }
+    if (studentNo && studentNo !== student.studentNo) {
+      const taken = await this.prisma.student.findUnique({
+        where: { classId_studentNo: { classId, studentNo } },
+        select: { id: true },
+      })
+      if (taken) throw new ConflictException(`学号 ${studentNo} 已被其他学生使用。`)
+    }
+    const updated = await this.prisma.student.update({
+      where: { id: studentId },
+      data: {
+        ...(studentNo ? { studentNo } : {}),
+        ...(name ? { name } : {}),
+      },
+      select: { id: true, studentNo: true, name: true },
+    })
+    return updated
   }
 
   async listGroups(classId: string) {

@@ -42,6 +42,19 @@ export class ImportStudentsDto {
   students!: StudentRowDto[]
 }
 
+/** 单独修改一名学生的学号/姓名；两个字段都可选，但至少要提供一个。 */
+export class UpdateStudentDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 40)
+  studentNo?: string
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 80)
+  name?: string
+}
+
 export class CreateGroupDto {
   @IsString()
   @Length(1, 40)

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const { api, client } = vi.hoisted(() => ({
-  api: { importClass: vi.fn(), verifyClassKey: vi.fn(), listStudents: vi.fn(), listGroups: vi.fn(), importStudents: vi.fn(), deleteStudent: vi.fn(), createGroups: vi.fn() },
+  api: { importClass: vi.fn(), verifyClassKey: vi.fn(), listStudents: vi.fn(), listGroups: vi.fn(), importStudents: vi.fn(), deleteStudent: vi.fn(), updateStudent: vi.fn(), createGroups: vi.fn() },
   client: {
     addImportedClass: vi.fn(),
     removeImportedClass: vi.fn(),
@@ -209,6 +209,42 @@ describe('class import and switching', () => {
     expect(memberList.text()).toContain('202502110201')
     expect(memberList.text()).toContain('卜康怡')
     expect(memberList.text()).toContain('陈佃兴')
+  })
+
+  it('edits a student number and name individually through the row edit button', async () => {
+    api.updateStudent.mockResolvedValue({ id: 's2', studentNo: '202502110202', name: '陈凤迪' })
+    const wrapper = await openClassWithStudents()
+
+    const editButton = wrapper.findAll('button.member-edit')[1]
+    await editButton.trigger('click')
+    await flushPromises()
+    const dialog = wrapper.get('.modal-panel[role="dialog"]')
+    expect(dialog.attributes('aria-label')).toBe('修改学生信息')
+    const inputs = dialog.findAll('input')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('202502110202')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('陈佃兴')
+
+    await inputs[1].setValue('陈凤迪')
+    await dialog.get('.modal-foot').findAll('button').find((button) => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(api.updateStudent).toHaveBeenCalledWith('class-1', 's2', { name: '陈凤迪' })
+    const memberList = wrapper.get('ul[aria-label="班级成员列表"]')
+    expect(memberList.text()).toContain('陈凤迪')
+    expect(wrapper.text()).toContain('已修改学生信息')
+    expect(wrapper.find('.modal-panel[role="dialog"]').exists()).toBe(false)
+  })
+
+  it('rejects an unchanged edit without calling the api', async () => {
+    const wrapper = await openClassWithStudents()
+
+    await wrapper.findAll('button.member-edit')[0].trigger('click')
+    await flushPromises()
+    await wrapper.get('.modal-panel').get('.modal-foot').findAll('button').find((button) => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(api.updateStudent).not.toHaveBeenCalled()
+    expect(wrapper.find('.modal-panel[role="dialog"]').exists()).toBe(false)
   })
 
   it('opens a centered dialog for member actions and closes it from the backdrop', async () => {
