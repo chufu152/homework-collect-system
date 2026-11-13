@@ -117,14 +117,21 @@ export class StorageService {
       if (!response.Body) throw new Error('Stored object has no response body.')
       return Buffer.from(await response.Body.transformToByteArray())
     }
-    try {
-      return await withTimeout(readFile(this.resolveLocalPath(key)), PRIMARY_IO_TIMEOUT_MS, 'Primary storage read')
-    } catch (primaryError) {
+    // 主盘已被探测为不可用（教师电脑离线/挂载假死）时直接读暂存，
+    // 避免每个请求都白等一次主盘 IO 超时。
+    let primaryError: unknown = null
+    if (await this.checkPrimaryHealth()) {
       try {
-        return await readFile(this.resolveFallbackPath(key))
-      } catch {
-        throw primaryError
+        return await withTimeout(readFile(this.resolveLocalPath(key)), PRIMARY_IO_TIMEOUT_MS, 'Primary storage read')
+      } catch (error) {
+        primaryError = error
+        if (error instanceof Error && error.message.includes('timed out')) this.markPrimaryUnhealthy()
       }
+    }
+    try {
+      return await readFile(this.resolveFallbackPath(key))
+    } catch (fallbackError) {
+      throw primaryError ?? fallbackError
     }
   }
 
@@ -142,18 +149,23 @@ export class StorageService {
 
     const fullPath = this.resolveLocalPath(key)
     // Fail before any response headers are written when the object has gone missing.
-    // 挂载假死时 access 可能挂起，超时后转查服务器暂存目录。
-    try {
-      await withTimeout(access(fullPath), PRIMARY_IO_TIMEOUT_MS, 'Primary storage access')
-      return createReadStream(fullPath)
-    } catch (primaryError) {
-      const fallbackPath = this.resolveFallbackPath(key)
+    // 挂载假死时 access 可能挂起：超时后转查服务器暂存目录；主盘已被判不健康时直接跳过。
+    let primaryError: unknown = null
+    if (await this.checkPrimaryHealth()) {
       try {
-        await access(fallbackPath)
-        return createReadStream(fallbackPath)
-      } catch {
-        throw primaryError
+        await withTimeout(access(fullPath), PRIMARY_IO_TIMEOUT_MS, 'Primary storage access')
+        return createReadStream(fullPath)
+      } catch (error) {
+        primaryError = error
+        if (error instanceof Error && error.message.includes('timed out')) this.markPrimaryUnhealthy()
       }
+    }
+    const fallbackPath = this.resolveFallbackPath(key)
+    try {
+      await access(fallbackPath)
+      return createReadStream(fallbackPath)
+    } catch {
+      throw primaryError ?? new Error(`Stored object not found: ${key}`)
     }
   }
 
@@ -187,7 +199,11 @@ export class StorageService {
     }
     const localDir = this.resolveLocalPath(trimmed)
     const fallbackDir = this.resolveFallbackPath(trimmed)
-    await walk(this.localRoot, localDir)
+    // 主盘目录遍历曾因 FUSE 挂载假死把 libuv 线程池全部卡死（本次线上事故的根因）：
+    // 1) 主盘被探测为不健康时完全跳过；2) 即使健康也加超时兜底。
+    if (await this.checkPrimaryHealth()) {
+      await withTimeout(walk(this.localRoot, localDir), PRIMARY_IO_TIMEOUT_MS, 'Primary storage list').catch(() => undefined)
+    }
     await walk(this.fallbackRoot, fallbackDir)
     return [...keys].filter((key) => key.startsWith(`${trimmed}/`))
   }
@@ -287,7 +303,7 @@ export class StorageService {
     await writeFile(fullPath, buffer, { flag: 'w' })
   }
 
-  /** 探测主盘可写性（建目录+写删一个探针文件），结果短期缓存；TTL 内直接用缓存值。 */
+  /** 探测主盘可写性（建目录+写删一个探针文件+目录列举），结果短期缓存；TTL 内直接用缓存值。 */
   private async checkPrimaryHealth(force = false): Promise<boolean> {
     if (!force && Date.now() - this.lastProbeAt < PRIMARY_PROBE_TTL_MS) return this.primaryHealthy
     if (this.probeInFlight) return this.probeInFlight
@@ -297,9 +313,12 @@ export class StorageService {
         const probe = (async () => {
           await mkdir(this.localRoot, { recursive: true })
           await writeFile(probePath, Date.now().toString(), { flag: 'w' })
+          await rm(probePath, { force: true })
+          // vfs-cache-mode writes 会把写缓存到本地，光写成功不代表远端可达；
+          // 目录列举（缓存过期后）必须真正打到远端，才能探出教师电脑掉线。
+          await readdir(this.localRoot)
         })()
         await withTimeout(probe, PRIMARY_IO_TIMEOUT_MS, 'Primary storage probe')
-        await rm(probePath, { force: true }).catch(() => undefined)
         this.primaryHealthy = true
       } catch {
         this.primaryHealthy = false
